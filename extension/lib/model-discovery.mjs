@@ -51,6 +51,68 @@ export function deriveProviderFromModelId(modelId = '') {
   return '';
 }
 
+export async function discoverModelsFromRegistry({
+  apiFetch,
+  readJsonResponse,
+  refresh = false,
+} = {}) {
+  if (typeof apiFetch !== 'function' || typeof readJsonResponse !== 'function') {
+    return { ok: false, error: 'no-fetch', models: [] };
+  }
+  try {
+    const suffix = refresh ? '?refresh=true' : '';
+    const response = await apiFetch(`/api/model/options${suffix}`, { method: 'GET' });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: payload?.error?.message || payload?.error || `status-${response.status}`,
+        models: [],
+      };
+    }
+    const providers = Array.isArray(payload?.providers) ? payload.providers : [];
+    const models = [];
+    const seen = new Set();
+    for (const provider of providers) {
+      const slug = String(provider?.slug || provider?.id || provider?.provider || '').trim();
+      const providerLabel = String(provider?.name || provider?.label || slug || 'Hermes').trim();
+      const entries = Array.isArray(provider?.models) ? provider.models : [];
+      const caps = provider?.capabilities && typeof provider.capabilities === 'object' ? provider.capabilities : {};
+      const unavailable = new Set(Array.isArray(provider?.unavailable_models) ? provider.unavailable_models : []);
+      for (const entry of entries) {
+        const modelId = String(
+          typeof entry === 'string'
+            ? entry
+            : entry?.id || entry?.name || entry?.model || ''
+        ).trim();
+        if (!modelId) continue;
+        const dedupeKey = `${slug || deriveProviderFromModelId(modelId) || providerLabel}::${modelId}`.toLowerCase();
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        const modelCaps = caps[modelId] || {};
+        const uiId = slug ? `${slug}::${modelId}` : modelId;
+        models.push({
+          id: uiId,
+          rawModelId: modelId,
+          label: typeof entry === 'object' ? (entry.label || entry.name || modelId) : modelId,
+          provider: slug || deriveProviderFromModelId(modelId),
+          providerLabel,
+          description: provider?.warning || provider?.source || '',
+          contextTokens: Number(entry?.context_length || entry?.contextTokens || 0) || 0,
+          fast: typeof modelCaps.fast === 'boolean' ? modelCaps.fast : undefined,
+          reasoning: typeof modelCaps.reasoning === 'boolean' ? modelCaps.reasoning : undefined,
+          authenticated: provider?.authenticated !== false,
+          available: !unavailable.has(modelId),
+          source: 'registry',
+        });
+      }
+    }
+    return { ok: true, models, error: '' };
+  } catch (error) {
+    return { ok: false, error: error?.message || 'error', models: [] };
+  }
+}
+
 export async function discoverModelsFromSessions({
   apiFetch,
   readJsonResponse,

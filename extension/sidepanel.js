@@ -50,6 +50,7 @@ import {
   probeGatewayHealth,
 } from './lib/agent-discovery.mjs';
 import {
+  discoverModelsFromRegistry,
   discoverModelsFromSessions,
   mergeModelsWithRegistry,
 } from './lib/model-discovery.mjs';
@@ -1475,6 +1476,9 @@ function applySelectedModel(selectedId, { persist = true, keepOpen = false } = {
 async function loadModels({ quiet = false, payload = null } = {}) {
   try {
     let data = payload;
+    let registryModels = [];
+    let registrySource = '';
+
     if (!data && isRemoteWsMode()) {
       // Remote reads go over the WS (REST is CORS-blocked). Only possible once
       // a socket is open; otherwise keep the default model until connected.
@@ -1484,24 +1488,38 @@ async function loadModels({ quiet = false, payload = null } = {}) {
         return;
       }
       data = await remoteWsConnection.client.request(WS_METHODS.modelOptions);
+      registrySource = 'dashboard';
     }
-    if (!data) {
-      const response = await apiFetch('/v1/models', { method: 'GET' });
-      data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data?.error?.message || data?.error || `Model list failed (${response.status})`);
-    }
-    let registryModels = normalizeHermesModels(data, settings.model);
 
-    // When /v1/models returns only the synthetic `hermes-agent` alias (the
-    // default Hermes v0.17.0 contract), fall back to discovering real model
-    // names from /api/sessions. This surfaces MiniMax-M3, gpt-5.5, etc. — the
-    // models the user actually has access to via the routing chain.
+    if (data) {
+      registryModels = normalizeHermesModels(data, settings.model);
+    } else {
+      const registryResult = await discoverModelsFromRegistry({ apiFetch, readJsonResponse });
+      if (registryResult.ok && registryResult.models.length) {
+        registryModels = normalizeHermesModels(registryResult.models, settings.model);
+        registrySource = 'registry';
+      } else {
+        const response = await apiFetch('/v1/models', { method: 'GET' });
+        data = await readJsonResponse(response);
+        if (!response.ok) throw new Error(data?.error?.message || data?.error || `Model list failed (${response.status})`);
+        registryModels = normalizeHermesModels(data, settings.model);
+        registrySource = 'v1';
+        if (!quiet && registryResult.error && registryResult.error !== 'status-404') {
+          setStatus('warn', 'Model registry unavailable', `Falling back to /v1/models (${registryResult.error}).`);
+        }
+      }
+    }
+
+    // If the gateway only exposes the OpenAI-compatible virtual alias, keep a
+    // best-effort session-history fallback. The durable source is
+    // /api/model/options; sessions are only for older gateways.
     if (registryModels.length <= 1 && registryModels[0]?.id === DEFAULT_SETTINGS.model) {
       const sessionResult = await discoverModelsFromSessions({ apiFetch, readJsonResponse });
       if (sessionResult.ok && sessionResult.models.length) {
         const merged = mergeModelsWithRegistry({ registryModels, sessionModels: sessionResult.models });
         if (merged.length > registryModels.length) {
           registryModels = normalizeHermesModels(merged, settings.model);
+          registrySource = 'sessions';
           if (!quiet) {
             setStatus(
               'ok',
@@ -1518,7 +1536,16 @@ async function loadModels({ quiet = false, payload = null } = {}) {
     availableModels = registryModels;
     renderModelOptions(availableModels);
     applySelectedModel(settings.model, { persist: false });
-    if (!quiet) setStatus('ok', 'Hermes models synced', `${availableModels.length} model${availableModels.length === 1 ? '' : 's'} available from local Hermes`);
+    if (!quiet) {
+      const sourceLabel = registrySource === 'registry'
+        ? 'from Hermes model registry'
+        : registrySource === 'dashboard'
+          ? 'from Hermes dashboard'
+          : registrySource === 'sessions'
+            ? 'from session history'
+            : 'from local Hermes';
+      setStatus('ok', 'Hermes models synced', `${availableModels.length} model${availableModels.length === 1 ? '' : 's'} available ${sourceLabel}`);
+    }
   } catch (error) {
     availableModels = normalizeHermesModels([], settings.model);
     renderModelOptions(availableModels);
@@ -1942,7 +1969,8 @@ async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), f
       id: sessionId,
       title,
       source: settings.sessionSource || DEFAULT_SETTINGS.sessionSource,
-      model: settings.model,
+      model: currentModelRequestId(),
+      provider: currentModelProviderSlug() || undefined,
       system_prompt: HERMES_BROWSER_SYSTEM_PROMPT,
     }),
   });
@@ -2465,7 +2493,8 @@ async function ensureHermesSession() {
       id: settings.sessionId,
       title: settings.sessionTitle,
       source: settings.sessionSource || DEFAULT_SETTINGS.sessionSource,
-      model: settings.model,
+      model: currentModelRequestId(),
+      provider: currentModelProviderSlug() || undefined,
       system_prompt: HERMES_BROWSER_SYSTEM_PROMPT,
     }),
   });
@@ -2584,6 +2613,20 @@ async function readSseResponse(response, onDelta, onTool, { signal, onRun } = {}
 
 function currentModelOptionsPayload() {
   return buildHermesModelOptions(settings);
+}
+
+function currentSelectedModel() {
+  return availableModels.find((model) => model.id === settings.model) || null;
+}
+
+function currentModelRequestId() {
+  const selected = currentSelectedModel();
+  return selected?.rawModelId || selected?.model || settings.model;
+}
+
+function currentModelProviderSlug() {
+  const selected = currentSelectedModel();
+  return selected?.provider || '';
 }
 
 async function ensureRemoteWsClient() {
@@ -2722,7 +2765,8 @@ async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments:
     method: 'POST',
     signal,
     body: JSON.stringify({
-      model: settings.model,
+      model: currentModelRequestId(),
+      provider: currentModelProviderSlug() || undefined,
       model_options: currentModelOptionsPayload(),
       message: outboundContent(prompt, turnAttachments),
       system_message: HERMES_BROWSER_SYSTEM_PROMPT,
@@ -2745,7 +2789,8 @@ async function streamChatCompletions(prompt, onDelta, onTool, { signal, attachme
       'X-Hermes-Session-Key': settings.sessionId,
     },
     body: JSON.stringify({
-      model: settings.model,
+      model: currentModelRequestId(),
+      provider: currentModelProviderSlug() || undefined,
       model_options: currentModelOptionsPayload(),
       stream: true,
       messages: [
@@ -2863,7 +2908,8 @@ async function fallbackSessionChat(prompt, turnAttachments = attachments) {
   const response = await apiFetch(`/api/sessions/${encodeSessionId(settings.sessionId)}/chat`, {
     method: 'POST',
     body: JSON.stringify({
-      model: settings.model,
+      model: currentModelRequestId(),
+      provider: currentModelProviderSlug() || undefined,
       model_options: currentModelOptionsPayload(),
       message: outboundContent(prompt, turnAttachments),
       system_message: HERMES_BROWSER_SYSTEM_PROMPT,
@@ -2882,7 +2928,8 @@ async function fallbackChatCompletions(prompt, turnAttachments = attachments) {
       'X-Hermes-Session-Key': settings.sessionId,
     },
     body: JSON.stringify({
-      model: settings.model,
+      model: currentModelRequestId(),
+      provider: currentModelProviderSlug() || undefined,
       model_options: currentModelOptionsPayload(),
       stream: false,
       messages: [

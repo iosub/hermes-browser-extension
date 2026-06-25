@@ -489,7 +489,60 @@ test('Windows setup helper supports safe JSON dry-run without exposing secrets',
   assert.doesNotMatch(result.stdout, /sk-[A-Za-z0-9_-]{12,}/);
 });
 
-// --- v0.1.3 model discovery + agent picker tweaks -------------------------
+// --- Durable Hermes model registry + agent picker tweaks ------------------
+
+test('discoverModelsFromRegistry flattens /api/model/options provider inventory', async () => {
+  const { discoverModelsFromRegistry } = await import('../extension/lib/model-discovery.mjs');
+  const calls = [];
+  const apiFetch = async (path, options) => {
+    calls.push([path, options?.method]);
+    assert.equal(path, '/api/model/options?refresh=true');
+    return { ok: true, status: 200 };
+  };
+  const readJsonResponse = async () => ({
+    providers: [
+      {
+        slug: 'openai-codex',
+        name: 'OpenAI Codex',
+        authenticated: true,
+        models: ['gpt-5.5', 'gpt-5.4'],
+        capabilities: { 'gpt-5.5': { reasoning: true, fast: true } },
+      },
+      {
+        slug: 'minimax',
+        name: 'MiniMax',
+        authenticated: true,
+        models: [{ id: 'MiniMax-M3', label: 'MiniMax M3', context_length: 1000000 }],
+      },
+    ],
+    model: 'gpt-5.5',
+    provider: 'openai-codex',
+  });
+
+  const result = await discoverModelsFromRegistry({ apiFetch, readJsonResponse, refresh: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.error, '');
+  assert.deepEqual(calls, [['/api/model/options?refresh=true', 'GET']]);
+  assert.deepEqual(result.models.map((model) => model.id), ['openai-codex::gpt-5.5', 'openai-codex::gpt-5.4', 'minimax::MiniMax-M3']);
+  assert.deepEqual(result.models.map((model) => model.rawModelId), ['gpt-5.5', 'gpt-5.4', 'MiniMax-M3']);
+  assert.equal(result.models[0].provider, 'openai-codex');
+  assert.equal(result.models[0].providerLabel, 'OpenAI Codex');
+  assert.equal(result.models[0].reasoning, true);
+  assert.equal(result.models[0].fast, true);
+  assert.equal(result.models[2].contextTokens, 1000000);
+});
+
+test('normalizeHermesModels preserves camelCase registry labels for grouping', () => {
+  const models = normalizeHermesModels([
+    { id: 'openai-codex::gpt-5.5', rawModelId: 'gpt-5.5', label: 'GPT-5.5', provider: 'openai-codex', providerLabel: 'OpenAI Codex' },
+    { id: 'github-copilot::gpt-5.5', rawModelId: 'gpt-5.5', label: 'GPT-5.5', provider: 'github-copilot', providerLabel: 'GitHub Copilot' },
+    { id: 'minimax::MiniMax-M3', rawModelId: 'MiniMax-M3', label: 'MiniMax M3', provider: 'minimax', providerLabel: 'MiniMax' },
+  ], 'openai-codex::gpt-5.5');
+  const groups = groupModelsForMenu(models, 'openai-codex::gpt-5.5');
+  assert.deepEqual(groups.map((group) => group.label), ['OpenAI Codex', 'GitHub Copilot', 'MiniMax']);
+  assert.equal(models[0].rawModelId, 'gpt-5.5');
+  assert.equal(models[1].rawModelId, 'gpt-5.5');
+});
 
 test('discoverModelsFromSessions extracts unique model names from /api/sessions', async () => {
   const { discoverModelsFromSessions } = await import('../extension/lib/model-discovery.mjs');

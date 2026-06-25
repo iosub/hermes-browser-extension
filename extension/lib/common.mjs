@@ -621,17 +621,24 @@ export function normalizeHermesModels(payload = {}, selectedModel = DEFAULT_SETT
     seen.add(id);
     models.push({
       id,
-      label: typeof item === 'string' ? item : item.name || item.id,
+      label: typeof item === 'string' ? item : item.label || item.name || item.id,
       owner: typeof item === 'string' ? '' : item.owned_by || item.provider || '',
       provider: typeof item === 'string' ? '' : item.provider || item.owned_by || '',
-      providerLabel: typeof item === 'string' ? '' : item.provider_label || item.provider_name || item.owned_by || item.provider || '',
+      providerLabel: typeof item === 'string' ? '' : item.providerLabel || item.provider_label || item.provider_name || item.owned_by || item.provider || '',
+      rawModelId: typeof item === 'string' ? item : item.rawModelId || item.raw_model_id || item.model || item.id,
       description: typeof item === 'string' ? '' : item.description || '',
       contextTokens: typeof item === 'string' ? 0 : modelContextTokens(item),
+      fast: typeof item === 'string' ? undefined : item.fast,
+      reasoning: typeof item === 'string' ? undefined : item.reasoning,
+      authenticated: typeof item === 'string' ? undefined : item.authenticated,
+      available: typeof item === 'string' ? undefined : item.available,
+      source: typeof item === 'string' ? '' : item.source || '',
     });
   }
 
   const selected = String(selectedModel || DEFAULT_SETTINGS.model);
-  if (selected && !seen.has(selected) && !(rawModels.length && selected === DEFAULT_SETTINGS.model)) {
+  const selectedMatchesRawModel = models.some((model) => model.rawModelId === selected);
+  if (selected && !seen.has(selected) && !selectedMatchesRawModel && !(rawModels.length && selected === DEFAULT_SETTINGS.model)) {
     models.push({ id: selected, label: selected, owner: 'selected', contextTokens: 0 });
   }
   if (!models.length) {
@@ -641,7 +648,7 @@ export function normalizeHermesModels(payload = {}, selectedModel = DEFAULT_SETT
 }
 
 export function modelDisplayName(model = {}) {
-  const raw = String(model.label || model.name || model.id || DEFAULT_SETTINGS.model);
+  const raw = String(model.label || model.name || model.rawModelId || model.id || DEFAULT_SETTINGS.model);
   const provider = String(model.provider || model.owner || model.providerLabel || '').trim();
   if (provider && raw.startsWith(`${provider}:`)) return raw.slice(provider.length + 1);
   return raw;
