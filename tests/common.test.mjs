@@ -335,6 +335,13 @@ test('composer busy controls reveal queue and steer only when the user is drafti
   assert.equal(busyDraft.controls.steer.hidden, false);
   assert.equal(busyDraft.controls.queue.label, 'Queue message');
   assert.equal(busyDraft.controls.steer.label, 'Steer the current run');
+
+  const busyDraftWithoutSteer = composerControlState({ connected: true, sending: true, draftText: 'tighten this answer', canSteer: false });
+  assert.equal(busyDraftWithoutSteer.busyDraft, true);
+  assert.equal(busyDraftWithoutSteer.controls.queue.hidden, false);
+  assert.equal(busyDraftWithoutSteer.controls.steer.hidden, true);
+  assert.equal(busyDraftWithoutSteer.controls.steer.disabled, true);
+  assert.equal(busyDraftWithoutSteer.controls.steer.label, 'Run steering unavailable');
 });
 
 test('queued message controls allow delete anytime and steer only when runnable text exists', () => {
@@ -354,6 +361,8 @@ test('queued message controls allow delete anytime and steer only when runnable 
   });
   assert.equal(queuedMessageControlState({ sending: false, text: 'later' }).steer.disabled, true);
   assert.equal(queuedMessageControlState({ sending: true, text: '   ' }).steer.disabled, true);
+  assert.equal(queuedMessageControlState({ sending: true, text: 'later', canSteer: false }).steer.hidden, true);
+  assert.equal(queuedMessageControlState({ sending: true, text: 'later', canSteer: false }).delete.disabled, false);
   assert.equal(queuedMessageControlState({ sending: true, text: '   ' }).delete.disabled, false);
 });
 

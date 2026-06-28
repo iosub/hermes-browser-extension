@@ -914,12 +914,17 @@ function setComposerButtonState(button, state = {}) {
   }
 }
 
+function canSteerActiveRun() {
+  return Boolean(isRemoteWsMode() || gatewayCapabilities.runSteer);
+}
+
 function currentComposerDraftState() {
   return composerControlState({
     connected: isConnected(),
     sending,
     draftText: els.input?.value || '',
     attachmentCount: attachments.length,
+    canSteer: canSteerActiveRun(),
   });
 }
 
@@ -950,7 +955,7 @@ function renderQueueNotice() {
   }
   const count = queuedTurn.attachments?.length || 0;
   const steerText = queuedTurnSteerText(queuedTurn);
-  const actionState = queuedMessageControlState({ sending, text: steerText });
+  const actionState = queuedMessageControlState({ sending, text: steerText, canSteer: canSteerActiveRun() });
   els.queueNotice.hidden = false;
   els.queueNotice.textContent = '';
 
@@ -974,7 +979,8 @@ function renderQueueNotice() {
   remove.textContent = actionState.delete.label;
   remove.title = actionState.delete.title;
 
-  actions.append(steer, remove);
+  if (!actionState.steer.hidden) actions.append(steer);
+  actions.append(remove);
   els.queueNotice.append(main, actions);
 }
 
@@ -1012,6 +1018,9 @@ async function sendSteerText(text) {
     const sessionId = await ensureRemoteWsSession(connection);
     await connection.client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: `/steer ${steerText}` });
     return true;
+  }
+  if (!canSteerActiveRun()) {
+    throw new Error('Connected Hermes runtime does not advertise active-run steering yet. Queue the draft instead, or update Hermes Gateway when /v1/runs/{run_id}/steer is available.');
   }
   if (!activeRunId) {
     throw new Error('Active run id is not available yet. Wait for Hermes to start streaming, then steer again.');

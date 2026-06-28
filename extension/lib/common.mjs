@@ -524,7 +524,7 @@ export function shouldSubmitComposerKey(event = {}) {
   return event.key === 'Enter' && !event.shiftKey && !event.isComposing;
 }
 
-export function composerControlState({ connected = false, sending = false, draftText = '', attachmentCount = 0 } = {}) {
+export function composerControlState({ connected = false, sending = false, draftText = '', attachmentCount = 0, canSteer = true } = {}) {
   const hasText = Boolean(String(draftText || '').trim());
   const hasAttachments = Number(attachmentCount || 0) > 0;
   const hasDraft = hasText || hasAttachments;
@@ -549,9 +549,9 @@ export function composerControlState({ connected = false, sending = false, draft
         label: 'Queue message',
       },
       steer: {
-        hidden: !busyDraft,
-        disabled: !connected || !sending || !hasText,
-        label: 'Steer the current run',
+        hidden: !busyDraft || !canSteer,
+        disabled: !connected || !sending || !hasText || !canSteer,
+        label: canSteer ? 'Steer the current run' : 'Run steering unavailable',
       },
     },
     mainButton: {
@@ -561,14 +561,14 @@ export function composerControlState({ connected = false, sending = false, draft
   };
 }
 
-export function queuedMessageControlState({ sending = false, text = '' } = {}) {
+export function queuedMessageControlState({ sending = false, text = '', canSteer = true } = {}) {
   const hasSteerText = Boolean(String(text || '').trim());
   return {
     steer: {
-      hidden: false,
-      disabled: !sending || !hasSteerText,
-      label: 'Steer now',
-      title: hasSteerText ? 'Steer the current run with this queued message' : 'Queued attachment-only turns cannot be steered',
+      hidden: !canSteer,
+      disabled: !sending || !hasSteerText || !canSteer,
+      label: canSteer ? 'Steer now' : 'Steering unavailable',
+      title: !canSteer ? 'Connected Hermes runtime does not advertise active-run steering yet' : (hasSteerText ? 'Steer the current run with this queued message' : 'Queued attachment-only turns cannot be steered'),
     },
     delete: {
       hidden: false,
