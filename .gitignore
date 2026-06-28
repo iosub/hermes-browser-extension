@@ -4,6 +4,8 @@ node_modules/
 # Build outputs and release artifacts
 dist/
 artifacts/
+build-info.json
+extension/build-info.json
 
 # Local QA/temp work
 tmp/

@@ -5,6 +5,7 @@ import path from 'node:path';
 const root = process.cwd();
 const src = path.join(root, 'extension');
 const dest = path.join(root, 'dist');
+const buildInfoFileName = 'build-info.json';
 
 function copyDir(from, to) {
   fs.mkdirSync(to, { recursive: true });
@@ -42,7 +43,11 @@ function buildInfo() {
   };
 }
 
+const infoJson = `${JSON.stringify(buildInfo(), null, 2)}\n`;
+fs.writeFileSync(path.join(root, buildInfoFileName), infoJson);
+fs.writeFileSync(path.join(src, buildInfoFileName), infoJson);
 fs.rmSync(dest, { recursive: true, force: true });
 copyDir(src, dest);
-fs.writeFileSync(path.join(dest, 'build-info.json'), `${JSON.stringify(buildInfo(), null, 2)}\n`);
+fs.writeFileSync(path.join(dest, buildInfoFileName), infoJson);
 console.log(`Built unpacked extension: ${dest}`);
+console.log(`Stamped build metadata: ${buildInfoFileName}, extension/${buildInfoFileName}, dist/${buildInfoFileName}`);
