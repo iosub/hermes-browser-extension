@@ -6,6 +6,7 @@
 - Added a composer-header tab-context control so Hermes can follow the active tab or pin to a specific tab without adding extra lower composer chrome.
 - Isolated pinned-tab conversations with per-tab local message caches and per-tab Hermes session bindings.
 - Added selected-tab filtering for the open-tabs context list inside the same upward context card, including all/none controls.
+- Added Desktop-style busy composer controls: typing during an active run now reveals separate Queue and Steer buttons, and queued messages expose Steer Now/Delete actions.
 - Reworked unpacked-build update checks to compare the loaded build commit against GitHub main instead of mislabeling post-release commits as unpulled.
 - Stamped build metadata into every supported unpacked load root so repo-root, `extension/`, and `dist/` installs can all verify commit alignment.
 - Added privacy redaction for sensitive tab titles/URLs before prompt assembly, including restricted active tabs and open-tab summaries.

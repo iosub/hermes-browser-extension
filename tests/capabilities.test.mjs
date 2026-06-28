@@ -19,6 +19,8 @@ test('normalizeGatewayCapabilities maps the Hermes /v1/capabilities API contract
       chat_completions_streaming: true,
       run_submission: true,
       run_events_sse: true,
+      run_stop: true,
+      run_steer: true,
       session_resources: true,
       session_chat: true,
       session_chat_streaming: true,
@@ -35,6 +37,8 @@ test('normalizeGatewayCapabilities maps the Hermes /v1/capabilities API contract
       sessions: { method: 'GET', path: '/api/sessions' },
       runs: { method: 'POST', path: '/v1/runs' },
       run_events: { method: 'GET', path: '/v1/runs/{run_id}/events' },
+      run_stop: { method: 'POST', path: '/v1/runs/{run_id}/stop' },
+      run_steer: { method: 'POST', path: '/v1/runs/{run_id}/steer' },
       session_chat: { method: 'POST', path: '/api/sessions/{session_id}/chat' },
       session_chat_stream: { method: 'POST', path: '/api/sessions/{session_id}/chat/stream' },
     },
@@ -50,6 +54,8 @@ test('normalizeGatewayCapabilities maps the Hermes /v1/capabilities API contract
   assert.equal(caps.skills, true);
   assert.equal(caps.runs, true);
   assert.equal(caps.runEvents, true);
+  assert.equal(caps.runStop, true);
+  assert.equal(caps.runSteer, true);
   assert.equal(caps.profiles, false);
   assert.equal(caps.audioTranscription, false);
   assert.equal(caps.browserPairing, false);
@@ -71,6 +77,7 @@ test('normalizeGatewayCapabilities degrades missing capability routes into a leg
   assert.equal(caps.sessions, true);
   assert.equal(caps.sessionChat, true);
   assert.equal(caps.skills, true);
+  assert.equal(caps.runSteer, false);
   assert.equal(caps.profiles, false);
   assert.equal(caps.audioTranscription, false);
   assert.equal(caps.browserPairing, false);
@@ -92,6 +99,8 @@ test('capabilityStatusRows turn capabilities into compatibility-panel statuses',
   assert.match(byKey.audioTranscription.detail, /browser speech fallback/i);
   assert.equal(byKey.imageUpload.status, 'warn');
   assert.equal(byKey.browserPairing.status, 'warn');
+  assert.equal(byKey.runSteer.status, 'warn');
+  assert.match(byKey.runSteer.detail, /queued drafts/i);
 });
 
 test('connectionSecuritySummary masks token state and classifies transport', () => {

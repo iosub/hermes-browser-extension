@@ -108,6 +108,12 @@
               <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 4 5.5 10.5l1.4 1.4L11 7.82V20h2V7.82l4.1 4.08 1.4-1.4L12 4Z"/></svg>
             </button>
             <button id="stopButton" class="composer-icon composer-stop" type="button" aria-label="Stop Hermes" title="Stop Hermes" hidden>■</button>
+            <button id="queueButton" class="composer-icon composer-queue" type="button" aria-label="Queue message" title="Queue message" hidden>
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M7 4h10a2 2 0 0 1 2 2v8h-2V6H7v12h6v2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3 4h4v2h-4V8Zm0 4h4v2h-4v-2Zm6 4v-3h2v3h3v2h-3v3h-2v-3h-3v-2h3Z"/></svg>
+            </button>
+            <button id="steerButton" class="composer-icon composer-steer" type="button" aria-label="Steer the current run" title="Steer the current run" hidden>
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 4 6 10h4v4a4 4 0 0 0 4 4h4v-2h-4a2 2 0 0 1-2-2v-4h4L12 4Z"/></svg>
+            </button>
             <section id="quickMoreMenu" class="quick-more-menu" hidden role="menu" aria-label="Quick commands"></section>
             <section id="skillMenu" class="skill-menu" role="listbox" aria-label="Hermes skill suggestions" hidden></section>
             <section id="attachMenu" class="attach-menu" role="dialog" aria-label="Attach context" hidden>
@@ -126,7 +132,7 @@
           <input id="imageInput" type="file" accept="image/*" multiple hidden />
           <input id="folderInput" type="file" webkitdirectory directory multiple hidden />
           <p class="composer-help">Enter sends. Shift+Enter adds a new line. Ctrl+V, drag/drop, or + attaches files.</p>
-          <p id="queueNotice" class="queue-notice" hidden></p>
+          <section id="queueNotice" class="queue-notice" aria-live="polite" hidden></section>
           <div class="composer-actions">
             <button id="refreshButton" class="secondary icon-refresh" type="button" title="Refresh page context" aria-label="Refresh page context">↻</button>
             <button id="sendButton" type="submit">Ask Hermes</button>

@@ -9,6 +9,7 @@ import {
   buildHermesModelOptions,
   buildHermesPrompt,
   clampText,
+  composerControlState,
   connectionStateForGateway,
   contextChipSummary,
   encodeSessionId,
@@ -38,6 +39,7 @@ import {
   normalizeGatewayUrl,
   normalizeReasoningEffort,
   pairingFailureMessage,
+  queuedMessageControlState,
   reasoningEffortShortLabel,
   renderMarkdown,
   safeTab,
@@ -120,6 +122,8 @@ const els = {
   queueNotice: $('#queueNotice'),
   sendButton: $('#sendButton'),
   inlineSendButton: $('#inlineSendButton'),
+  queueButton: $('#queueButton'),
+  steerButton: $('#steerButton'),
   stopButton: $('#stopButton'),
   voiceButton: $('#voiceButton'),
   refreshButton: $('#refreshButton'),
@@ -900,23 +904,41 @@ function updateConnectionPrompt() {
   updateComposerBusyState();
 }
 
+function setComposerButtonState(button, state = {}) {
+  if (!button) return;
+  button.hidden = Boolean(state.hidden);
+  button.disabled = Boolean(state.disabled);
+  if (state.label) {
+    button.title = state.label;
+    button.setAttribute('aria-label', state.label);
+  }
+}
+
+function currentComposerDraftState() {
+  return composerControlState({
+    connected: isConnected(),
+    sending,
+    draftText: els.input?.value || '',
+    attachmentCount: attachments.length,
+  });
+}
+
 function updateComposerBusyState() {
-  const connected = isConnected();
-  if (els.inlineSendButton) {
-    els.inlineSendButton.hidden = sending;
-    els.inlineSendButton.disabled = sending || !connected;
-    els.inlineSendButton.title = connected ? 'Send message' : 'Connect to Hermes first';
-    els.inlineSendButton.setAttribute('aria-label', els.inlineSendButton.title);
-  }
-  if (els.stopButton) {
-    els.stopButton.hidden = !sending;
-    els.stopButton.disabled = !sending;
-  }
+  const state = currentComposerDraftState();
+  setComposerButtonState(els.inlineSendButton, state.controls.inlineSend);
+  setComposerButtonState(els.stopButton, state.controls.stop);
+  setComposerButtonState(els.queueButton, state.controls.queue);
+  setComposerButtonState(els.steerButton, state.controls.steer);
+  els.composerDropZone?.classList.toggle('busy-draft', state.busyDraft);
   if (els.sendButton) {
-    els.sendButton.disabled = !connected && !sending;
-    if (connected) els.sendButton.textContent = sending ? 'Queue message' : 'Ask Hermes';
+    els.sendButton.disabled = state.mainButton.disabled;
+    if (isConnected()) els.sendButton.textContent = state.mainButton.label;
   }
   renderQueueNotice();
+}
+
+function queuedTurnSteerText(turn = queuedTurn) {
+  return String(turn?.text || '').trim();
 }
 
 function renderQueueNotice() {
@@ -927,8 +949,33 @@ function renderQueueNotice() {
     return;
   }
   const count = queuedTurn.attachments?.length || 0;
+  const steerText = queuedTurnSteerText(queuedTurn);
+  const actionState = queuedMessageControlState({ sending, text: steerText });
   els.queueNotice.hidden = false;
-  els.queueNotice.textContent = `Queued next message${count ? ` · ${count} attachment${count === 1 ? '' : 's'}` : ''}. It will send after the current turn stops or finishes.`;
+  els.queueNotice.textContent = '';
+
+  const main = document.createElement('span');
+  main.className = 'queue-notice-main';
+  main.textContent = `Queued next message${count ? ` · ${count} attachment${count === 1 ? '' : 's'}` : ''}. It will send after the current turn stops or finishes.`;
+
+  const actions = document.createElement('div');
+  actions.className = 'queue-notice-actions';
+
+  const steer = document.createElement('button');
+  steer.type = 'button';
+  steer.dataset.queuedAction = 'steer';
+  steer.textContent = actionState.steer.label;
+  steer.title = actionState.steer.title;
+  steer.disabled = actionState.steer.disabled;
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.dataset.queuedAction = 'delete';
+  remove.textContent = actionState.delete.label;
+  remove.title = actionState.delete.title;
+
+  actions.append(steer, remove);
+  els.queueNotice.append(main, actions);
 }
 
 function queueCurrentDraft() {
@@ -938,10 +985,87 @@ function queueCurrentDraft() {
   els.input.value = '';
   clearAttachments();
   renderSkillSuggestions();
-  renderQueueNotice();
+  updateComposerBusyState();
   setStatus('ok', 'Message queued', 'Hermes will send it after the current turn finishes or stops.');
   els.input.focus();
   return true;
+}
+
+function deleteQueuedTurn() {
+  if (!queuedTurn) return false;
+  queuedTurn = null;
+  renderQueueNotice();
+  setStatus('ok', 'Queued message deleted', 'The current Hermes turn will continue without sending the queued draft.');
+  els.input.focus();
+  return true;
+}
+
+async function sendSteerText(text) {
+  const steerText = String(text || '').trim();
+  if (!steerText) return false;
+  if (!sending) {
+    setStatus('warn', 'Nothing to steer', 'Hermes is not currently running. Send or queue the message instead.');
+    return false;
+  }
+  if (isRemoteWsMode()) {
+    const connection = await ensureRemoteWsClient();
+    const sessionId = await ensureRemoteWsSession(connection);
+    await connection.client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: `/steer ${steerText}` });
+    return true;
+  }
+  if (!activeRunId) {
+    throw new Error('Active run id is not available yet. Wait for Hermes to start streaming, then steer again.');
+  }
+  const response = await apiFetch(`/v1/runs/${encodeURIComponent(activeRunId)}/steer`, {
+    method: 'POST',
+    body: JSON.stringify({ input: steerText, message: steerText }),
+  });
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    const detail = payload?.error?.message || payload?.error || payload?.message || `Hermes steer failed (${response.status})`;
+    if (response.status === 404) {
+      throw new Error(`${detail}. Update Hermes Gateway to a build with /v1/runs/{run_id}/steer support, then reload the extension.`);
+    }
+    throw new Error(detail);
+  }
+  return true;
+}
+
+async function steerCurrentDraft() {
+  const text = els.input.value.trim();
+  if (!text) return false;
+  try {
+    await sendSteerText(text);
+    els.input.value = '';
+    renderSkillSuggestions();
+    updateComposerBusyState();
+    setStatus('ok', 'Steered current run', 'Hermes will receive this guidance inside the active turn.');
+    els.input.focus();
+    return true;
+  } catch (error) {
+    setStatus('warn', 'Steer failed', error?.message || String(error));
+    els.input.focus();
+    return false;
+  }
+}
+
+async function steerQueuedTurn() {
+  if (!queuedTurn) return false;
+  const text = queuedTurnSteerText(queuedTurn);
+  if (!text) return false;
+  try {
+    await sendSteerText(text);
+    if (queuedTurn.attachments?.length) queuedTurn = { text: '', attachments: queuedTurn.attachments };
+    else queuedTurn = null;
+    renderQueueNotice();
+    setStatus('ok', 'Steered queued message', 'The queued text was injected into the active run.');
+    els.input.focus();
+    return true;
+  } catch (error) {
+    setStatus('warn', 'Steer failed', error?.message || String(error));
+    els.input.focus();
+    return false;
+  }
 }
 
 function isAbortError(error) {
@@ -1576,6 +1700,7 @@ function renderAttachments() {
     pill.append(icon, label, close);
     els.attachmentList.appendChild(pill);
   }
+  updateComposerBusyState();
 }
 
 async function uploadImageAttachment(attachment) {
@@ -4180,6 +4305,13 @@ function bindEvents() {
   });
   els.refreshButton.addEventListener('click', refreshContext);
   els.stopButton?.addEventListener('click', stopCurrentTurn);
+  els.queueButton?.addEventListener('click', queueCurrentDraft);
+  els.steerButton?.addEventListener('click', () => { steerCurrentDraft(); });
+  els.queueNotice?.addEventListener('click', (event) => {
+    const action = event.target?.closest?.('[data-queued-action]')?.dataset?.queuedAction;
+    if (action === 'delete') deleteQueuedTurn();
+    if (action === 'steer') steerQueuedTurn();
+  });
   els.voiceButton?.addEventListener('click', toggleVoiceDictation);
   els.checkUpdatesButton?.addEventListener('click', checkForUpdates);
   els.refreshModelsButton.addEventListener('click', () => loadModels());
@@ -4401,6 +4533,7 @@ function bindEvents() {
   els.input.addEventListener('input', () => {
     renderContextWindow();
     renderSkillSuggestions();
+    updateComposerBusyState();
   });
   document.querySelectorAll('[data-prompt]').forEach((button) => {
     button.addEventListener('click', async () => {

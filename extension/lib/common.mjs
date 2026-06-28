@@ -524,6 +524,61 @@ export function shouldSubmitComposerKey(event = {}) {
   return event.key === 'Enter' && !event.shiftKey && !event.isComposing;
 }
 
+export function composerControlState({ connected = false, sending = false, draftText = '', attachmentCount = 0 } = {}) {
+  const hasText = Boolean(String(draftText || '').trim());
+  const hasAttachments = Number(attachmentCount || 0) > 0;
+  const hasDraft = hasText || hasAttachments;
+  const busyDraft = Boolean(sending && hasDraft);
+  return {
+    hasDraft,
+    hasSteerText: hasText,
+    busyDraft,
+    controls: {
+      inlineSend: {
+        hidden: Boolean(sending),
+        disabled: Boolean(sending || !connected),
+        label: connected ? 'Send message' : 'Connect to Hermes first',
+      },
+      stop: {
+        hidden: !sending,
+        disabled: !sending,
+      },
+      queue: {
+        hidden: !busyDraft,
+        disabled: !connected || !busyDraft,
+        label: 'Queue message',
+      },
+      steer: {
+        hidden: !busyDraft,
+        disabled: !connected || !sending || !hasText,
+        label: 'Steer the current run',
+      },
+    },
+    mainButton: {
+      disabled: !connected && !sending,
+      label: sending ? 'Queue message' : 'Ask Hermes',
+    },
+  };
+}
+
+export function queuedMessageControlState({ sending = false, text = '' } = {}) {
+  const hasSteerText = Boolean(String(text || '').trim());
+  return {
+    steer: {
+      hidden: false,
+      disabled: !sending || !hasSteerText,
+      label: 'Steer now',
+      title: hasSteerText ? 'Steer the current run with this queued message' : 'Queued attachment-only turns cannot be steered',
+    },
+    delete: {
+      hidden: false,
+      disabled: false,
+      label: 'Delete queued',
+      title: 'Delete the queued message',
+    },
+  };
+}
+
 function escapeHtml(value = '') {
   return String(value || '')
     .replace(/&/g, '&amp;')

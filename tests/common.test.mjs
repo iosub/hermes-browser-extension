@@ -14,6 +14,7 @@ import {
   buildHermesPrompt,
   clampText,
   collectReadablePageText,
+  composerControlState,
   contextChipSummary,
   estimateContextWindow,
   extractAssistantText,
@@ -35,6 +36,7 @@ import {
   normalizeHermesSkills,
   pairingFailureMessage,
   privacySafeTabForPrompt,
+  queuedMessageControlState,
   redactSensitiveText,
   renderMarkdown,
   reasoningEffortShortLabel,
@@ -285,6 +287,74 @@ test('composer renders an inline up-arrow send button immediately after voice di
   assert.match(inlineSendMarkup, /type="submit"/);
   assert.match(inlineSendMarkup, /aria-label="Send message"/);
   assert.match(inlineSendMarkup, /<svg[^>]+viewBox="0 0 24 24"/);
+});
+
+test('composer renders Desktop-style queue and steer controls for busy drafts', () => {
+  const html = readFileSync(new URL('../extension/sidepanel.html', import.meta.url), 'utf8');
+  const voiceIndex = html.indexOf('id="voiceButton"');
+  const stopIndex = html.indexOf('id="stopButton"');
+  const queueIndex = html.indexOf('id="queueButton"');
+  const steerIndex = html.indexOf('id="steerButton"');
+  const queueNoticeIndex = html.indexOf('id="queueNotice"');
+  assert.notEqual(voiceIndex, -1);
+  assert.notEqual(stopIndex, -1);
+  assert.notEqual(queueIndex, -1);
+  assert.notEqual(steerIndex, -1);
+  assert.ok(stopIndex > voiceIndex, 'stop should sit next to mic while a run is active');
+  assert.ok(queueIndex > stopIndex, 'queue should render after stop in the composer icon cluster');
+  assert.ok(steerIndex > queueIndex, 'steer should render immediately after queue');
+  assert.match(html.slice(queueIndex, queueIndex + 500), /aria-label="Queue message"/);
+  assert.match(html.slice(steerIndex, steerIndex + 600), /aria-label="Steer the current run"/);
+  const queueNoticeMarkup = html.slice(Math.max(0, queueNoticeIndex - 40), queueNoticeIndex + 120);
+  assert.match(queueNoticeMarkup, /<section[^>]+id="queueNotice"/);
+});
+
+test('composer busy controls reveal queue and steer only when the user is drafting during a run', () => {
+  assert.deepEqual(composerControlState({ connected: true, sending: false, draftText: '' }), {
+    hasDraft: false,
+    hasSteerText: false,
+    busyDraft: false,
+    controls: {
+      inlineSend: { hidden: false, disabled: false, label: 'Send message' },
+      stop: { hidden: true, disabled: true },
+      queue: { hidden: true, disabled: true, label: 'Queue message' },
+      steer: { hidden: true, disabled: true, label: 'Steer the current run' },
+    },
+    mainButton: { disabled: false, label: 'Ask Hermes' },
+  });
+
+  const busyIdle = composerControlState({ connected: true, sending: true, draftText: '' });
+  assert.equal(busyIdle.controls.stop.hidden, false);
+  assert.equal(busyIdle.controls.queue.hidden, true);
+  assert.equal(busyIdle.controls.steer.hidden, true);
+
+  const busyDraft = composerControlState({ connected: true, sending: true, draftText: 'tighten this answer' });
+  assert.equal(busyDraft.busyDraft, true);
+  assert.equal(busyDraft.controls.stop.hidden, false);
+  assert.equal(busyDraft.controls.queue.hidden, false);
+  assert.equal(busyDraft.controls.steer.hidden, false);
+  assert.equal(busyDraft.controls.queue.label, 'Queue message');
+  assert.equal(busyDraft.controls.steer.label, 'Steer the current run');
+});
+
+test('queued message controls allow delete anytime and steer only when runnable text exists', () => {
+  assert.deepEqual(queuedMessageControlState({ sending: true, text: 'use this instead' }), {
+    steer: {
+      hidden: false,
+      disabled: false,
+      label: 'Steer now',
+      title: 'Steer the current run with this queued message',
+    },
+    delete: {
+      hidden: false,
+      disabled: false,
+      label: 'Delete queued',
+      title: 'Delete the queued message',
+    },
+  });
+  assert.equal(queuedMessageControlState({ sending: false, text: 'later' }).steer.disabled, true);
+  assert.equal(queuedMessageControlState({ sending: true, text: '   ' }).steer.disabled, true);
+  assert.equal(queuedMessageControlState({ sending: true, text: '   ' }).delete.disabled, false);
 });
 
 test('voice dictation targets the Desktop-compatible Hermes audio transcription API', () => {
