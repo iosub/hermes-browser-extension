@@ -126,6 +126,8 @@ test('buildContextReceipt summarizes exactly what browser context was sent', () 
     context: {
       activeTab: { title: 'Hermes Docs', url: 'https://hermes-agent.nousresearch.com/docs' },
       tabs: [{ title: 'Hermes Docs', active: true }, { title: 'GitHub', active: false }],
+      selectedTabs: [{ title: 'Hermes Docs', active: true }],
+      contextScope: { mode: 'pinned-tab', pinnedTitle: 'Hermes Docs', pinnedUrl: 'https://hermes-agent.nousresearch.com/docs' },
       pageContext: {
         selectedText: 'selected copy',
         text: 'page text '.repeat(100),
@@ -145,19 +147,42 @@ test('buildContextReceipt summarizes exactly what browser context was sent', () 
 
   assert.equal(receipt.title, 'What Hermes saw');
   assert.deepEqual(receipt.items.map((item) => item.label), [
+    'Context scope',
     'Active tab',
+    'Pinned tab',
     'Selected text',
     'Page text',
     'YouTube transcript',
-    'Open tabs',
+    'Open tabs in window',
+    'Tabs sent to Hermes',
     'Attachments',
     'Redactions',
   ]);
   assert.match(receipt.items.find((item) => item.label === 'Active tab').value, /Hermes Docs/);
+  assert.equal(receipt.items.find((item) => item.label === 'Open tabs in window').value, '2');
+  assert.equal(receipt.items.find((item) => item.label === 'Tabs sent to Hermes').value, '1');
   assert.match(receipt.items.find((item) => item.label === 'Attachments').value, /1 image, 1 file/);
 });
 
-test('v0.1.6 UI has compatibility, token hygiene, and What Hermes saw surfaces', () => {
+test('buildContextReceipt reports chat-only as no browser context attached', () => {
+  const receipt = buildContextReceipt({
+    context: {
+      activeTab: { title: 'Secret', url: 'https://secret.example' },
+      tabs: [{ title: 'Secret', url: 'https://secret.example' }],
+      pageContext: { selectedText: 'secret', text: 'secret page' },
+      contextScope: { mode: 'chat-only' },
+    },
+    attachments: [{ kind: 'file', label: 'notes.txt', text: 'notes' }],
+    settings: { includeTabs: true, includePageText: true, includeSelectedText: true },
+  });
+
+  assert.deepEqual(receipt, {
+    title: 'What Hermes saw',
+    items: [{ label: 'Context', value: 'Chat only — no browser context attached' }],
+  });
+});
+
+test('sidepanel UI has compatibility, token hygiene, and What Hermes saw surfaces', () => {
   const html = readFileSync(new URL('../extension/sidepanel.html', import.meta.url), 'utf8');
   const js = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
   const voiceJs = readFileSync(new URL('../extension/voice-dictation.js', import.meta.url), 'utf8');
@@ -165,6 +190,10 @@ test('v0.1.6 UI has compatibility, token hygiene, and What Hermes saw surfaces',
   assert.match(html, /id="compatibilityList"/);
   assert.match(html, /id="commandMenuButton"/);
   assert.match(html, /id="quickMoreMenu" class="quick-more-menu"/);
+  assert.match(html, /settings-subsection browser-behavior-settings/);
+  assert.match(html, /settings-toggle-card compact-toggle/);
+  assert.match(html, /settings-choice-grid/);
+  assert.doesNotMatch(html, /class="checks"/);
   assert.doesNotMatch(html, /class="quick-actions"/);
   assert.doesNotMatch(html, /id="quickActionsScroll"/);
   assert.doesNotMatch(html, /id="tabPickerButton"/);

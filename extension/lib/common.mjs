@@ -53,6 +53,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   autoNameSessions: true,
   colorMode: 'dark',
   appearanceTheme: 'nous',
+  panelResidencyMode: 'tab-attached',
   maxTabs: 12,
   maxLocalMessages: 40,
 });
@@ -126,15 +127,27 @@ export function normalizedExtensionOrigin(value = '') {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
-// The remote-dashboard WebSocket is reachable from the (secure-context) side
-// panel only over https. Plain http to a non-loopback host is mixed-content
-// blocked, and a bare host like "example.com" fails to parse, so neither counts.
-export function isUsableRemoteGatewayUrl(value = '') {
+// Remote API mode can use trusted LAN/VPN http:// hosts when a token is present.
+// Remote dashboard mode talks to a dashboard WebSocket and must stay HTTPS/WSS.
+export function isUsableRemoteApiUrl(value = '') {
+  try {
+    const protocol = new URL(String(value || '')).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function isUsableRemoteDashboardUrl(value = '') {
   try {
     return new URL(String(value || '')).protocol === 'https:';
   } catch {
     return false;
   }
+}
+
+export function isUsableRemoteGatewayUrl(value = '') {
+  return isUsableRemoteDashboardUrl(value);
 }
 
 export function gatewayConnectionSummary({ gatewayMode = DEFAULT_SETTINGS.gatewayMode, gatewayUrl = DEFAULT_SETTINGS.gatewayUrl, extensionOrigin = '' } = {}) {
@@ -410,9 +423,14 @@ export function connectionStateForGateway({
   remoteWsReadyState = -1,
 } = {}) {
   const mode = normalizeGatewayMode(gatewayMode);
-  const configured = mode === 'remote-dashboard'
-    ? isUsableRemoteGatewayUrl(gatewayUrl)
-    : Boolean(apiKey) && (mode === 'local-api' || isUsableRemoteGatewayUrl(gatewayUrl));
+  let configured = false;
+  if (mode === 'remote-dashboard') {
+    configured = isUsableRemoteDashboardUrl(gatewayUrl);
+  } else if (mode === 'remote-api') {
+    configured = Boolean(apiKey) && isUsableRemoteApiUrl(gatewayUrl);
+  } else {
+    configured = Boolean(apiKey);
+  }
   if (!configured) return { state: 'unconfigured', connected: false, pillClass: 'warn' };
   if (mode === 'remote-dashboard') {
     if (remoteWsReadyState === 1) return { state: 'connected', connected: true, pillClass: 'ok' };
@@ -1138,8 +1156,17 @@ function formatMeta(meta = {}) {
   return parts.join('\n\n');
 }
 
+function isChatOnlyScope(scope = {}) {
+  return scope?.mode === 'chat-only';
+}
+
+function buildChatOnlyPrompt(userText = '') {
+  return `CHAT_ONLY_CONTEXT_START\nNo browser page context was read or attached. The user chose Chat only mode in Hermes Browser Extension. Answer as a normal Hermes assistant without using active tab, selected text, open tabs, page metadata, transcript, or page text.\nCHAT_ONLY_CONTEXT_END\n\nUSER_REQUEST_START\n${String(userText || '').trim()}\nUSER_REQUEST_END`;
+}
+
 export function buildHermesPrompt({ userText, activeTab, tabs = [], pageContext, selectedTabs, contextScope, settings = DEFAULT_SETTINGS }) {
   const mergedSettings = { ...DEFAULT_SETTINGS, ...settings };
+  if (isChatOnlyScope(contextScope)) return buildChatOnlyPrompt(userText);
   const limit = contextCharLimit(mergedSettings.contextDepth);
   const selectedText = mergedSettings.includeSelectedText ? redactSensitiveText(pageContext?.selectedText || '') : '';
   const pageText = mergedSettings.includePageText ? clampText(redactSensitiveText(pageContext?.text || ''), limit) : '';
@@ -1169,19 +1196,39 @@ function contextPart(value = '', enabled = true) {
   };
 }
 
-export function estimateContextWindow({ userText = '', activeTab, tabs = [], pageContext = {}, settings = DEFAULT_SETTINGS } = {}) {
+export function estimateContextWindow({ userText = '', activeTab, tabs = [], selectedTabs, pageContext = {}, settings = DEFAULT_SETTINGS, contextScope = null } = {}) {
   const mergedSettings = { ...DEFAULT_SETTINGS, ...settings };
+  const modelContext = Number(mergedSettings.modelContextTokens || 0);
+  const hasModelContext = Number.isFinite(modelContext) && modelContext > 0;
+  if (isChatOnlyScope(contextScope)) {
+    const prompt = buildChatOnlyPrompt(userText);
+    const estimatedTokens = estimateTokens(prompt);
+    return {
+      promptChars: prompt.length,
+      estimatedTokens,
+      modelContextTokens: hasModelContext ? modelContext : 0,
+      percentUsed: hasModelContext ? Math.min(999, Math.round((estimatedTokens / modelContext) * 1000) / 10) : null,
+      parts: {
+        userRequest: contextPart(userText, true),
+        activeTab: contextPart('', false),
+        openTabs: contextPart('', false),
+        selectedText: contextPart('', false),
+        pageMetadata: contextPart('', false),
+        youtubeTranscript: contextPart('', false),
+        pageText: contextPart('', false),
+      },
+    };
+  }
   const limit = contextCharLimit(mergedSettings.contextDepth);
   const selectedText = mergedSettings.includeSelectedText ? redactSensitiveText(pageContext?.selectedText || '') : '';
   const pageText = mergedSettings.includePageText ? clampText(redactSensitiveText(pageContext?.text || ''), limit) : '';
-  const tabsText = mergedSettings.includeTabs ? summarizeTabs(tabs || [], mergedSettings.maxTabs) : '';
+  const activeTabs = Array.isArray(selectedTabs) ? selectedTabs : tabs;
+  const tabsText = mergedSettings.includeTabs ? summarizeTabs(activeTabs || [], mergedSettings.maxTabs) : '';
   const metaText = formatMeta(pageContext?.meta || {});
   const transcriptText = formatYoutubeTranscript(pageContext?.youtubeTranscript, limit);
   const activeText = `${activeTab?.title || '(unknown)'}\n${activeTab?.url || '(unknown)'}`;
-  const prompt = buildHermesPrompt({ userText, activeTab, tabs, pageContext, settings: mergedSettings });
-  const modelContext = Number(mergedSettings.modelContextTokens || 0);
+  const prompt = buildHermesPrompt({ userText, activeTab, tabs, selectedTabs, pageContext, contextScope, settings: mergedSettings });
   const estimatedTokens = estimateTokens(prompt);
-  const hasModelContext = Number.isFinite(modelContext) && modelContext > 0;
   return {
     promptChars: prompt.length,
     estimatedTokens,

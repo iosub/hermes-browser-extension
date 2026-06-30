@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.7 — 2026-06-30
+
+- Added tab-attached side panel opening by default, with a settings toggle to keep the panel global across tabs when preferred.
+- Preserved tab-attached side panel paths for both supported load-unpacked roots: repo root and `dist/`/`extension/`.
+- Added Chat only context scope so Hermes can run without reading the active tab, open tabs, selected text, page metadata, transcript, or page text.
+- Made Chat only short-circuit before browser tab queries and isolated its local message cache from page-context conversations.
+- Fixed selected-tab context accounting so the context meter and “What Hermes saw” receipt report tabs actually sent to Hermes, not just tabs open in the window.
+- Fixed Remote API connection validation so trusted `http://host:8642` API servers work with a token while remote dashboard WebSocket mode stays HTTPS-only.
+- Added `/rewrite` and `/action-items` to match the public docs, while keeping `/actions` reserved for listing interactive page elements.
+- Preserved attachment context for slash-command turns, so commands like `/summarize` do not drop attached text/files.
+- Updated public privacy, permissions, and data-flow docs for v0.1.7’s Chat only and tab-attached behavior.
+
 ## v0.1.6 — 2026-06-28
 
 - Added built-in quick commands such as `/summarize`, `/explain`, `/rewrite`, `/tabs`, and `/action-items`, with slash dispatch and command suggestions in the side panel.

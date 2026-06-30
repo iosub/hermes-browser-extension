@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   BUILTIN_COMMANDS,
@@ -27,6 +28,22 @@ test('built-in command registry exposes stable visible commands', () => {
   assert.ok(names.includes('translate'));
   assert.ok(names.includes('explain'));
   assert.ok(names.includes('tabs'));
+});
+
+test('publicly advertised quick commands are backed by the built-in registry', () => {
+  const docs = [
+    readFileSync(new URL('../README.md', import.meta.url), 'utf8'),
+    readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8'),
+  ].join('\n');
+  const advertised = [...docs.matchAll(/`\/(summarize|explain|rewrite|tabs|action-items)`/g)]
+    .map((match) => match[1]);
+  const uniqueAdvertised = [...new Set(advertised)];
+  const registryNames = new Set(BUILTIN_COMMANDS.map((command) => command.name));
+
+  assert.deepEqual(uniqueAdvertised.sort(), ['action-items', 'explain', 'rewrite', 'summarize', 'tabs']);
+  for (const name of uniqueAdvertised) {
+    assert.ok(registryNames.has(name), `/${name} should exist in BUILTIN_COMMANDS`);
+  }
 });
 
 test('command lookup supports slash prefixes and aliases', () => {

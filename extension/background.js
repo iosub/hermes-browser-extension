@@ -1,32 +1,144 @@
 import {
+  buildSidePanelPath,
+  DEFAULT_PANEL_RESIDENCY_MODE,
+  normalizePanelResidencyMode,
+  PANEL_RESIDENCY_MODES,
+} from './lib/panel-residency.mjs';
+import {
   normalizeTranscriptPayload,
   parseTimedTextXml,
   parseYoutubeJson3,
   providerUrlForVideo,
 } from './lib/transcript.mjs';
 
+let cachedPanelResidencyMode = DEFAULT_PANEL_RESIDENCY_MODE;
+
+function defaultSidePanelPath() {
+  return chrome.runtime.getManifest().side_panel?.default_path || 'sidepanel.html';
+}
+
+function panelResidencyModeFromStorage(stored = {}) {
+  return normalizePanelResidencyMode(
+    stored?.hermesBrowserSettings?.panelResidencyMode
+      || stored?.panelResidencyMode
+      || DEFAULT_PANEL_RESIDENCY_MODE,
+  );
+}
+
+async function refreshPanelResidencyModeFromStorage() {
+  try {
+    const stored = await chrome.storage.local.get(['hermesBrowserSettings', 'panelResidencyMode']);
+    cachedPanelResidencyMode = panelResidencyModeFromStorage(stored);
+  } catch (error) {
+    console.warn('[Hermes Browser] Could not read panel residency setting:', error);
+    cachedPanelResidencyMode = DEFAULT_PANEL_RESIDENCY_MODE;
+  }
+  return cachedPanelResidencyMode;
+}
+
+async function setActionClickSidePanelBehavior() {
+  if (!chrome.sidePanel?.setPanelBehavior) return;
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+}
+
+async function activeBrowserTabId() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabId = Number(tab?.id);
+    return Number.isFinite(tabId) && tabId > 0 ? tabId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function applyPanelResidencyMode(mode = cachedPanelResidencyMode, { tabId = null } = {}) {
+  const panelResidencyMode = normalizePanelResidencyMode(mode);
+  const defaultPanelPath = defaultSidePanelPath();
+  const cleanTabId = Number(tabId);
+  const useTabAttached = panelResidencyMode === PANEL_RESIDENCY_MODES.TAB_ATTACHED && Number.isFinite(cleanTabId) && cleanTabId > 0;
+
+  await setActionClickSidePanelBehavior();
+  if (!chrome.sidePanel?.setOptions) return;
+
+  if (panelResidencyMode === PANEL_RESIDENCY_MODES.TAB_ATTACHED) {
+    await chrome.sidePanel.setOptions({ enabled: false });
+    if (useTabAttached) {
+      await chrome.sidePanel.setOptions({
+        tabId: cleanTabId,
+        path: buildSidePanelPath({
+          mode: panelResidencyMode,
+          tabId: cleanTabId,
+          defaultPath: defaultPanelPath,
+        }),
+        enabled: true,
+      });
+    }
+    return;
+  }
+
+  await chrome.sidePanel.setOptions({
+    path: buildSidePanelPath({
+      mode: panelResidencyMode,
+      defaultPath: defaultPanelPath,
+    }),
+    enabled: true,
+  });
+}
+
 async function configureSidePanel() {
   try {
-    if (chrome.sidePanel?.setPanelBehavior) {
-      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    }
+    const panelResidencyMode = await refreshPanelResidencyModeFromStorage();
+    const tabId = await activeBrowserTabId();
+    await applyPanelResidencyMode(panelResidencyMode, { tabId });
   } catch (error) {
     console.warn('[Hermes Browser] Unable to set side panel behavior:', error);
   }
 }
 
+function reapplyPanelResidencyForTab(tabId) {
+  applyPanelResidencyMode(cachedPanelResidencyMode, { tabId })
+    .catch((error) => console.warn('[Hermes Browser] Could not apply panel residency setting:', error));
+}
+
 async function openHermesPanel(tab) {
+  await refreshPanelResidencyModeFromStorage();
+  const panelResidencyMode = cachedPanelResidencyMode;
+  const tabId = Number(tab?.id);
+  const useTabAttached = panelResidencyMode === PANEL_RESIDENCY_MODES.TAB_ATTACHED && Number.isFinite(tabId) && tabId > 0;
+  const defaultPanelPath = defaultSidePanelPath();
+  const panelPath = buildSidePanelPath({
+    mode: panelResidencyMode,
+    tabId: useTabAttached ? tabId : null,
+    defaultPath: defaultPanelPath,
+  });
+  const sidePanelCanOpen = Boolean(chrome.sidePanel?.open);
+
   try {
-    if (chrome.sidePanel?.open && tab?.windowId) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
-      return;
+    if (sidePanelCanOpen) {
+      await applyPanelResidencyMode(panelResidencyMode, { tabId: useTabAttached ? tabId : null });
+      if (useTabAttached) {
+        try {
+          await chrome.sidePanel.open({ tabId });
+          return;
+        } catch (tabOpenError) {
+          if (!tab?.windowId) throw tabOpenError;
+          const { windowId } = tab;
+          console.warn('[Hermes Browser] Tab side panel open failed, retrying window side panel:', tabOpenError);
+          await chrome.sidePanel.open({ windowId });
+          return;
+        }
+      }
+      if (tab?.windowId) {
+        const { windowId } = tab;
+        await chrome.sidePanel.open({ windowId });
+        return;
+      }
     }
   } catch (error) {
-    console.warn('[Hermes Browser] Side panel open failed, falling back to extension tab:', error);
+    console.warn('[Hermes Browser] Side panel open failed:', error);
+    if (sidePanelCanOpen) return;
   }
 
-  const manifest = chrome.runtime.getManifest();
-  const panelPath = manifest.side_panel?.default_path || 'sidepanel.html';
   await chrome.tabs.create({ url: chrome.runtime.getURL(panelPath) });
 }
 
@@ -125,6 +237,22 @@ async function getYoutubeTranscript({ videoId, tabId, provider = 'default' } = {
 chrome.runtime.onInstalled.addListener(configureSidePanel);
 chrome.runtime.onStartup.addListener(configureSidePanel);
 chrome.action.onClicked.addListener(openHermesPanel);
+chrome.tabs?.onActivated?.addListener?.(({ tabId }) => reapplyPanelResidencyForTab(tabId));
+chrome.storage?.onChanged?.addListener?.((changes, areaName) => {
+  if (areaName !== 'local') return;
+  let changed = false;
+  if (changes.hermesBrowserSettings?.newValue?.panelResidencyMode) {
+    cachedPanelResidencyMode = normalizePanelResidencyMode(changes.hermesBrowserSettings.newValue.panelResidencyMode);
+    changed = true;
+  } else if (changes.panelResidencyMode?.newValue) {
+    cachedPanelResidencyMode = normalizePanelResidencyMode(changes.panelResidencyMode.newValue);
+    changed = true;
+  }
+  if (changed) {
+    activeBrowserTabId()
+      .then((tabId) => reapplyPanelResidencyForTab(tabId));
+  }
+});
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== 'HERMES_GET_YOUTUBE_TRANSCRIPT') return false;
   getYoutubeTranscript(message)

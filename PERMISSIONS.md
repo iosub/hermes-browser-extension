@@ -2,7 +2,7 @@
 
 Hermes Browser Extension is a Chrome/Edge/Chromium MV3 side panel for connecting the active browser page to your configured Hermes Agent runtime.
 
-This document describes the shipped v0.1.6 permission model.
+This document describes the shipped v0.1.7 permission model.
 
 ## Required extension permissions
 
@@ -18,7 +18,7 @@ This document describes the shipped v0.1.6 permission model.
 
 | Permission | Why it is optional |
 | --- | --- |
-| `audioCapture` | Requested only when voice dictation needs microphone capture from an extension page. If Hermes audio transcription is unavailable, v0.1.6 can use Browser speech fallback when Chromium exposes Web Speech. |
+| `audioCapture` | Requested only when voice dictation needs microphone capture from an extension page. If Hermes audio transcription is unavailable, v0.1.7 can use Browser speech fallback when Chromium exposes Web Speech. |
 
 ## Host permissions
 
@@ -35,7 +35,7 @@ The current alpha manifest includes:
 
 These host permissions let the side panel read context from normal web pages and connect to local or remote Hermes Gateway/API servers.
 
-v0.1.6 keeps this host-permission surface unchanged while adding tab pinning and sensitive-tab prompt redaction. A narrower optional-host-permissions migration is intentionally deferred until it can be shipped without breaking load-unpacked context capture.
+v0.1.7 keeps this host-permission surface unchanged while adding tab-attached panel opening, Chat only/no-context mode, and selected-tab prompt controls. A narrower optional-host-permissions migration is intentionally deferred until it can be shipped without breaking load-unpacked context capture.
 
 The extension still blocks browser-internal and sensitive categories in code, including:
 
@@ -44,7 +44,7 @@ The extension still blocks browser-internal and sensitive categories in code, in
 
 ## Permissions not requested
 
-Hermes Browser Extension v0.1.6 does **not** request:
+Hermes Browser Extension v0.1.7 does **not** request:
 
 - `debugger`
 - `nativeMessaging`

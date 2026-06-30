@@ -20,8 +20,11 @@ const tabs = [
 ];
 
 test('normalizeContextScope defaults to follow-active', () => {
-  assert.equal(normalizeContextScope({}).mode, CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE);
+  const scope = normalizeContextScope({});
+  assert.equal(scope.mode, CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE);
+  assert.deepEqual(scope.selectedTabIds, [], 'fresh follow-active scope should start as page-only, not include-all');
   assert.equal(tabScopeId({}), 'follow-active');
+  assert.deepEqual(filterPromptTabs(tabs, scope), []);
 });
 
 test('pinned tab scope resolves the pinned tab instead of active tab', () => {
@@ -58,5 +61,24 @@ test('pinned tab titles are clipped before storage/session naming', () => {
 test('filterPromptTabs keeps selected tab ids only and allows empty selections', () => {
   assert.deepEqual(filterPromptTabs(tabs, normalizeContextScope({ selectedTabIds: [2] })), [tabs[1]]);
   assert.deepEqual(filterPromptTabs(tabs, normalizeContextScope({ selectedTabIds: [] })), []);
-  assert.deepEqual(filterPromptTabs(tabs, normalizeContextScope({ selectedTabIds: null })), tabs);
+  assert.deepEqual(filterPromptTabs(tabs, normalizeContextScope({ selectedTabIds: null })), tabs, 'explicit null still means include all tabs');
+});
+
+test('chat-only mode resolves no tab and uses chat-only storage keys', () => {
+  const scope = normalizeContextScope({ mode: CONTEXT_SCOPE_MODES.CHAT_ONLY, pinnedTabId: 2, selectedTabIds: [1, 2] });
+  assert.equal(scope.mode, CONTEXT_SCOPE_MODES.CHAT_ONLY);
+  assert.equal(scope.pinnedTabId, null);
+  assert.deepEqual(scope.selectedTabIds, []);
+  assert.equal(tabScopeId(scope), CONTEXT_SCOPE_MODES.CHAT_ONLY);
+  assert.equal(resolveContextTargetTab({ activeTab: tabs[0], tabs, scope }), null);
+  assert.deepEqual(filterPromptTabs(tabs, scope), []);
+  assert.equal(messageStorageKeyForScope(scope), 'hermesBrowserMessages:chat-only');
+  assert.equal(sessionBindingKeyForScope(scope), 'hermesBrowserSession:chat-only');
+});
+
+test('chat-only mode does not refresh for tab events', () => {
+  const scope = normalizeContextScope({ mode: CONTEXT_SCOPE_MODES.CHAT_ONLY });
+  assert.equal(shouldRefreshForTabEvent({ scope, eventType: 'activated', eventTabId: 1 }), false);
+  assert.equal(shouldRefreshForTabEvent({ scope, eventType: 'updated', eventTabId: 1 }), false);
+  assert.equal(shouldRefreshForTabEvent({ scope, eventType: 'removed', eventTabId: 1 }), false);
 });

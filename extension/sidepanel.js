@@ -93,8 +93,13 @@ import {
   sessionBindingKeyForScope,
   shouldRefreshForTabEvent,
 } from './lib/context-scope.mjs';
+import {
+  normalizePanelResidencyMode,
+  parseSidePanelParams,
+} from './lib/panel-residency.mjs';
 
 const $ = (selector) => document.querySelector(selector);
+const sidePanelParams = parseSidePanelParams(globalThis.location?.search || '');
 
 const els = {
   appScroll: $('#appScroll'),
@@ -177,6 +182,7 @@ const els = {
   includeTabsInput: $('#includeTabsInput'),
   includePageTextInput: $('#includePageTextInput'),
   includeSelectedTextInput: $('#includeSelectedTextInput'),
+  panelResidencyInputs: Array.from(document.querySelectorAll('input[name="panelResidencyMode"]')),
   autoNameSessionsInput: $('#autoNameSessionsInput'),
   transcriptProviderInput: $('#transcriptProviderInput'),
   profileSelect: $('#profileSelect'),
@@ -203,7 +209,7 @@ const els = {
 let settings = { ...DEFAULT_SETTINGS };
 let contextScope = normalizeContextScope(DEFAULT_CONTEXT_SCOPE);
 let currentContext = { activeTab: null, tabs: [], pageContext: null, contextScope };
-let selectedTabs = null; // null = all tabs; array of SafeTab = user-filtered set
+let selectedTabs = []; // null = all tabs; array of SafeTab = user-filtered set
 let messages = [];
 let availableModels = [];
 let availableSessions = [];
@@ -236,6 +242,7 @@ let connectionProbeTimer = null;
 let connectionProbeInFlight = false;
 let gatewayCapabilities = { ...DEFAULT_GATEWAY_CAPABILITIES };
 let modelsRefreshing = false;
+let contextRefreshingFromButton = false;
 const CONNECTION_PROBE_INTERVAL_MS = 30_000;
 
 // remote-dashboard mode authenticates over the dashboard WebSocket with a
@@ -401,10 +408,23 @@ function contextScopeSessionKey() {
 
 function loadContextScopeForInstance() {
   try {
-    contextScope = normalizeContextScope(JSON.parse(globalThis.sessionStorage?.getItem(contextScopeSessionKey()) || '{}'));
+    const stored = globalThis.sessionStorage?.getItem(contextScopeSessionKey());
+    if (stored) {
+      contextScope = normalizeContextScope(JSON.parse(stored));
+      return contextScope;
+    }
   } catch {
+    // Fall through to URL-derived/default scope.
+  }
+  if (sidePanelParams.panelMode === 'tab-attached' && sidePanelParams.tabId) {
+    contextScope = normalizeContextScope({
+      mode: CONTEXT_SCOPE_MODES.PINNED_TAB,
+      pinnedTabId: sidePanelParams.tabId,
+    });
+  } else {
     contextScope = normalizeContextScope(DEFAULT_CONTEXT_SCOPE);
   }
+  saveContextScopeForInstance();
   return contextScope;
 }
 
@@ -417,7 +437,7 @@ function saveContextScopeForInstance() {
 }
 
 function activeMessagesStorageKey() {
-  return contextScope.mode === CONTEXT_SCOPE_MODES.PINNED_TAB
+  return contextScope.mode === CONTEXT_SCOPE_MODES.PINNED_TAB || contextScope.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY
     ? messageStorageKeyForScope(contextScope)
     : 'hermesBrowserMessages';
 }
@@ -476,6 +496,7 @@ function syncSelectedTabsToContextScope() {
 }
 
 function contextScopeLabel() {
+  if (contextScope.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) return 'Chat only';
   if (contextScope.mode === CONTEXT_SCOPE_MODES.PINNED_TAB) {
     return contextScope.pinnedTitle ? `Pinned: ${contextScope.pinnedTitle}` : 'Pinned tab';
   }
@@ -485,12 +506,15 @@ function contextScopeLabel() {
 function renderContextScopeControls() {
   if (!els.contextScopeButton || !els.contextScopeLabel) return;
   const pinned = contextScope.mode === CONTEXT_SCOPE_MODES.PINNED_TAB;
+  const chatOnly = contextScope.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY;
   els.contextScopeLabel.textContent = contextScopeLabel();
-  els.contextScopeButton.classList.toggle('active', pinned);
+  els.contextScopeButton.classList.toggle('active', pinned || chatOnly);
   els.contextScopeButton.setAttribute('aria-expanded', String(!els.contextScopeMenu?.hidden));
-  els.contextScopeButton.title = pinned
-    ? `Hermes is pinned to ${contextScope.pinnedUrl || contextScope.pinnedTitle || 'this tab'}`
-    : 'Hermes follows the active browser tab';
+  els.contextScopeButton.title = chatOnly
+    ? 'Hermes is in Chat only mode and will not read browser context'
+    : pinned
+      ? `Hermes is pinned to ${contextScope.pinnedUrl || contextScope.pinnedTitle || 'this tab'}`
+      : 'Hermes follows the active browser tab';
 }
 
 function appendContextScopeMenuButton({ action, label, detail = '', selected = false, parent = els.contextScopeMenu }) {
@@ -626,10 +650,17 @@ function renderContextScopeMenu(query = '', { focusSearch = false } = {}) {
   const actions = document.createElement('div');
   actions.className = 'context-scope-actions';
   appendContextScopeMenuButton({
+    action: 'chat-only',
+    label: 'Chat only',
+    detail: 'no page',
+    selected: contextScope.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY,
+    parent: actions,
+  });
+  appendContextScopeMenuButton({
     action: 'follow-active',
     label: 'Follow active tab',
     detail: 'live',
-    selected: contextScope.mode !== CONTEXT_SCOPE_MODES.PINNED_TAB,
+    selected: contextScope.mode === CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE,
     parent: actions,
   });
   appendContextScopeMenuButton({ action: 'pin-active', label: 'Pin current tab', detail: 'lock', parent: actions });
@@ -726,7 +757,15 @@ async function pinContextTabById(tabId) {
 }
 
 async function unlockContextScope() {
-  await applyContextScope({ ...contextScope, mode: CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE, pinnedTabId: null, pinnedWindowId: null, pinnedTitle: '', pinnedUrl: '' });
+  await applyContextScope({
+    ...contextScope,
+    mode: CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE,
+    pinnedTabId: null,
+    pinnedWindowId: null,
+    pinnedTitle: '',
+    pinnedUrl: '',
+    selectedTabIds: [],
+  });
 }
 
 function setGatewayCapabilities(caps) {
@@ -2150,7 +2189,9 @@ function renderContextWindow(userText = els.input?.value || '') {
     userText,
     activeTab: currentContext.activeTab,
     tabs: currentContext.tabs,
+    selectedTabs: currentContext.selectedTabs,
     pageContext: currentContext.pageContext,
+    contextScope,
     settings,
   });
   const sessionTokens = estimateLocalSessionTokens(userText);
@@ -2167,15 +2208,21 @@ function renderContextWindow(userText = els.input?.value || '') {
   els.contextMeterFill.style.width = stats.modelContextTokens ? `${Math.min(100, Math.max(0, meter.percent))}%` : '0%';
 
   const pc = currentContext?.pageContext;
-  const chip = contextChipSummary({ pageContext: pc, activeTab: currentContext.activeTab, parts: stats.parts });
-  els.contextChipLabel.textContent = chip.label;
-  els.contextChip.title = chip.title;
-  els.contextPreview.textContent = [
-    currentContext.activeTab?.title || '(unknown tab)',
-    currentContext.activeTab?.url || '',
-    '',
-    clampText(pc?.selectedText || pc?.text || pc?.reason || pc?.error || 'No readable page text captured yet.', 900),
-  ].filter(Boolean).join('\n');
+  if (contextScope.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) {
+    els.contextChipLabel.textContent = '💬 Chat only';
+    els.contextChip.title = 'No browser tab, selected text, open tabs, metadata, transcript, or page text will be attached.';
+    els.contextPreview.textContent = 'Chat only mode is active. Hermes will not read or attach browser context for this turn.';
+  } else {
+    const chip = contextChipSummary({ pageContext: pc, activeTab: currentContext.activeTab, parts: stats.parts });
+    els.contextChipLabel.textContent = chip.label;
+    els.contextChip.title = chip.title;
+    els.contextPreview.textContent = [
+      currentContext.activeTab?.title || '(unknown tab)',
+      currentContext.activeTab?.url || '',
+      '',
+      clampText(pc?.selectedText || pc?.text || pc?.reason || pc?.error || 'No readable page text captured yet.', 900),
+    ].filter(Boolean).join('\n');
+  }
 
   const rows = [
     ['User draft', stats.parts.userRequest],
@@ -3177,6 +3224,7 @@ async function loadSettings() {
     autoNameSessions: settings.autoNameSessions !== false,
     colorMode: normalizeColorMode(settings.colorMode),
     appearanceTheme: normalizeAppearanceTheme(settings.appearanceTheme),
+    panelResidencyMode: normalizePanelResidencyMode(settings.panelResidencyMode),
   };
   applyAppearanceSettings();
   if (migrateDesktopOptionDefaults) {
@@ -3211,6 +3259,9 @@ function syncSettingsForm() {
   els.includeTabsInput.checked = Boolean(settings.includeTabs);
   els.includePageTextInput.checked = Boolean(settings.includePageText);
   els.includeSelectedTextInput.checked = Boolean(settings.includeSelectedText);
+  for (const input of els.panelResidencyInputs || []) {
+    input.checked = input.value === normalizePanelResidencyMode(settings.panelResidencyMode);
+  }
   if (els.autoNameSessionsInput) els.autoNameSessionsInput.checked = settings.autoNameSessions !== false;
   if (els.agentHostInput) els.agentHostInput.value = settings.agentDiscoveryHost || DEFAULT_SETTINGS.agentDiscoveryHost;
   if (els.agentSchemeInput) els.agentSchemeInput.value = normalizeAgentDiscoveryScheme(settings.agentDiscoveryScheme || DEFAULT_SETTINGS.agentDiscoveryScheme);
@@ -3249,6 +3300,7 @@ async function saveSettingsFromForm() {
     includeTabs: els.includeTabsInput.checked,
     includePageText: els.includePageTextInput.checked,
     includeSelectedText: els.includeSelectedTextInput.checked,
+    panelResidencyMode: normalizePanelResidencyMode(els.panelResidencyInputs?.find((input) => input.checked)?.value || settings.panelResidencyMode),
     autoNameSessions: els.autoNameSessionsInput ? els.autoNameSessionsInput.checked : settings.autoNameSessions !== false,
     agentDiscoveryHost: normalizeAgentDiscoveryHost(els.agentHostInput?.value || settings.agentDiscoveryHost || DEFAULT_SETTINGS.agentDiscoveryHost),
     agentDiscoveryScheme: normalizeAgentDiscoveryScheme(els.agentSchemeInput?.value || settings.agentDiscoveryScheme || DEFAULT_SETTINGS.agentDiscoveryScheme),
@@ -3498,8 +3550,24 @@ async function getYoutubeTranscriptForTab(tab) {
 }
 
 async function refreshContext() {
+  if (contextScope.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) {
+    currentContext = { activeTab: null, tabs: [], selectedTabs: [], pageContext: null, contextScope };
+    selectedTabs = [];
+    setStatus('ok', 'Chat only', 'No browser context will be read or attached.');
+    renderContextScopeControls();
+    renderContextWindow();
+    return currentContext;
+  }
+
   const [active, tabs] = await Promise.all([activeTab(), tabsForCurrentScope()]);
   const tab = resolveContextTargetTab({ activeTab: active, tabs, scope: contextScope });
+  if (contextScope.mode === CONTEXT_SCOPE_MODES.PINNED_TAB && tab) {
+    const nextScope = contextScopeFromTab(tab, contextScope);
+    if (JSON.stringify(nextScope) !== JSON.stringify(contextScope)) {
+      contextScope = nextScope;
+      saveContextScopeForInstance();
+    }
+  }
   const pinnedMissing = contextScope.mode === CONTEXT_SCOPE_MODES.PINNED_TAB && !tab;
   const pageContext = tab
     ? await getPageContext(tab)
@@ -3508,8 +3576,15 @@ async function refreshContext() {
       : null;
   const youtubeTranscript = tab ? await getYoutubeTranscriptForTab(tab) : null;
   if (pageContext && youtubeTranscript) pageContext.youtubeTranscript = youtubeTranscript;
-  currentContext = { activeTab: tab, tabs, pageContext, contextScope };
   syncSelectedTabsFromContextScope(tabs);
+  const promptTabs = filterPromptTabs(tabs, contextScope);
+  currentContext = {
+    activeTab: tab,
+    tabs,
+    selectedTabs: Array.isArray(contextScope.selectedTabIds) ? promptTabs : tabs,
+    pageContext,
+    contextScope,
+  };
 
   if (pinnedMissing) {
     setStatus('warn', 'Pinned tab closed', 'Choose another tab or follow the active tab.');
@@ -3525,6 +3600,25 @@ async function refreshContext() {
   renderContextScopeControls();
   renderContextWindow();
   return currentContext;
+}
+
+function setRefreshButtonBusy(busy) {
+  if (!els.refreshButton) return;
+  els.refreshButton.classList.toggle('is-refreshing', Boolean(busy));
+  els.refreshButton.setAttribute('aria-busy', String(Boolean(busy)));
+  els.refreshButton.disabled = Boolean(busy);
+}
+
+async function refreshContextWithSpin() {
+  if (contextRefreshingFromButton) return currentContext;
+  contextRefreshingFromButton = true;
+  setRefreshButtonBusy(true);
+  try {
+    return await refreshContext();
+  } finally {
+    contextRefreshingFromButton = false;
+    setRefreshButtonBusy(false);
+  }
 }
 
 function authHeaders({ json = false } = {}) {
@@ -4119,9 +4213,11 @@ async function askHermes(userText, turnAttachments = [...attachments]) {
     const preparedAttachments = await saveImageAttachmentsForTurn(turnAttachments);
     const context = await refreshContext();
 
-    // Detect /command at the start of userText and resolve to a command prompt
+    // Detect /command at the start of userText and resolve to a command prompt.
+    // Attachments are appended after command expansion so /summarize + file/text
+    // carries the same attachment context as a normal chat turn.
     const parsedCommand = parseCommandInput(userText);
-    let promptUserText;
+    let basePromptText = userText;
     if (parsedCommand) {
       const resolved = resolveCommandPrompt(parsedCommand.command.name, parsedCommand.userInput, {
         activeTab: context.activeTab,
@@ -4129,10 +4225,9 @@ async function askHermes(userText, turnAttachments = [...attachments]) {
         pageContext: context.pageContext,
         settings,
       });
-      promptUserText = resolved?.prompt || userText;
-    } else {
-      promptUserText = userTextWithAttachments(userText, preparedAttachments);
+      basePromptText = resolved?.prompt || userText;
     }
+    const promptUserText = userTextWithAttachments(basePromptText, preparedAttachments);
     const displayUserText = preparedAttachments.length
       ? `${userText || 'Attachment-only turn.'}\n${preparedAttachments.map((attachment) => `${attachmentIcon(attachment.kind)} ${attachment.label}`).join('\n')}`
       : userText;
@@ -4385,7 +4480,9 @@ function bindEvents() {
       els.contextBarButton.setAttribute('aria-expanded', 'false');
     }
   });
-  els.refreshButton.addEventListener('click', refreshContext);
+  els.refreshButton.addEventListener('click', () => {
+    refreshContextWithSpin().catch((error) => setStatus('warn', 'Context refresh unavailable', error?.message || String(error)));
+  });
   els.stopButton?.addEventListener('click', stopCurrentTurn);
   els.queueButton?.addEventListener('click', queueCurrentDraft);
   els.steerButton?.addEventListener('click', () => { steerCurrentDraft(); });
@@ -4666,6 +4763,11 @@ function bindEvents() {
     }
 
     els.contextScopeMenu.hidden = true;
+    if (action === 'chat-only') {
+      applyContextScope({ mode: CONTEXT_SCOPE_MODES.CHAT_ONLY }, { ensureSession: true })
+        .catch((error) => setStatus('warn', 'Could not switch to Chat only', error?.message || String(error)));
+      return;
+    }
     if (action === 'follow-active' || action === 'unlock') {
       unlockContextScope().catch((error) => setStatus('warn', 'Could not unlock tab scope', error?.message || String(error)));
       return;

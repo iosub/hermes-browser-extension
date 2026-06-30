@@ -314,9 +314,69 @@
           <input id="sessionTitleInput" name="sessionTitle" type="text" placeholder="Hermes Browser Extension" />
         </label>
 
-        <label class="checkbox-row">
-          <input id="autoNameSessionsInput" type="checkbox" /> Auto-name new browser sessions from the first message
-        </label>
+        <section class="settings-subsection browser-behavior-settings" aria-labelledby="browserBehaviorTitle">
+          <div class="settings-section-head compact">
+            <div>
+              <h4 id="browserBehaviorTitle">Browser Behavior</h4>
+              <p>Session naming, prompt context, and side-panel residency live together.</p>
+            </div>
+          </div>
+
+          <label class="settings-toggle-card auto-name-toggle">
+            <span class="settings-toggle-copy">
+              <strong>Auto-name browser sessions</strong>
+              <small>Rename a fresh browser session from the first real message.</small>
+            </span>
+            <input id="autoNameSessionsInput" class="settings-switch-input" type="checkbox" />
+            <span class="settings-switch" aria-hidden="true"></span>
+          </label>
+
+          <div class="settings-control-group" aria-label="Prompt context settings">
+            <div class="settings-control-group-head">
+              <strong>Prompt context</strong>
+              <small>Choose what browser context is allowed into each prompt.</small>
+            </div>
+            <div class="settings-toggle-grid settings-toggle-grid-three">
+              <label class="settings-toggle-card compact-toggle">
+                <span class="settings-toggle-copy"><strong>Open tabs</strong><small>Window tab list</small></span>
+                <input id="includeTabsInput" class="settings-switch-input" type="checkbox" />
+                <span class="settings-switch" aria-hidden="true"></span>
+              </label>
+              <label class="settings-toggle-card compact-toggle">
+                <span class="settings-toggle-copy"><strong>Page text</strong><small>Readable DOM text</small></span>
+                <input id="includePageTextInput" class="settings-switch-input" type="checkbox" />
+                <span class="settings-switch" aria-hidden="true"></span>
+              </label>
+              <label class="settings-toggle-card compact-toggle">
+                <span class="settings-toggle-copy"><strong>Selection</strong><small>Highlighted text</small></span>
+                <input id="includeSelectedTextInput" class="settings-switch-input" type="checkbox" />
+                <span class="settings-switch" aria-hidden="true"></span>
+              </label>
+            </div>
+          </div>
+
+          <fieldset class="panel-residency-options settings-choice-group">
+            <legend>Panel opening</legend>
+            <div class="settings-choice-grid">
+              <label class="settings-choice-card">
+                <input type="radio" name="panelResidencyMode" value="tab-attached" />
+                <span class="settings-choice-copy">
+                  <strong>Attach to current tab</strong>
+                  <small>Hermes appears only on tabs where you open it.</small>
+                </span>
+                <span class="settings-choice-mark" aria-hidden="true"></span>
+              </label>
+              <label class="settings-choice-card">
+                <input type="radio" name="panelResidencyMode" value="global" />
+                <span class="settings-choice-copy">
+                  <strong>Keep open across tabs</strong>
+                  <small>Use one global panel that follows the browser window.</small>
+                </span>
+                <span class="settings-choice-mark" aria-hidden="true"></span>
+              </label>
+            </div>
+          </fieldset>
+        </section>
 
         <label>
           Page context depth
@@ -331,12 +391,6 @@
           YouTube transcript provider
           <input id="transcriptProviderInput" name="transcriptProvider" type="text" placeholder="default, off, or https://provider.example/transcript?video_id={video_id}" />
         </label>
-
-        <div class="checks">
-          <label><input id="includeTabsInput" type="checkbox" /> Include open tabs</label>
-          <label><input id="includePageTextInput" type="checkbox" /> Include page text</label>
-          <label><input id="includeSelectedTextInput" type="checkbox" /> Include selected text</label>
-        </div>
 
         <p class="hint">Public flow: Connect to Hermes creates a scoped browser token when the API server supports pairing. For remote hosts, set API_SERVER_CORS_ORIGINS to this extension origin and use a strong API_SERVER_KEY or scoped token.</p>
 

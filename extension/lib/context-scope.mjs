@@ -1,4 +1,5 @@
 export const CONTEXT_SCOPE_MODES = Object.freeze({
+  CHAT_ONLY: 'chat-only',
   FOLLOW_ACTIVE: 'follow-active',
   PINNED_TAB: 'pinned-tab',
 });
@@ -9,7 +10,7 @@ export const DEFAULT_CONTEXT_SCOPE = Object.freeze({
   pinnedWindowId: null,
   pinnedTitle: '',
   pinnedUrl: '',
-  selectedTabIds: null,
+  selectedTabIds: [],
 });
 
 export const MAX_PINNED_TITLE_CHARS = 72;
@@ -26,29 +27,39 @@ function finiteNumberOrNull(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function normalizeSelectedTabIds(value) {
-  if (!Array.isArray(value)) return null;
+function normalizeSelectedTabIds(value, fallback = DEFAULT_CONTEXT_SCOPE.selectedTabIds) {
+  if (typeof value === 'undefined') return fallback;
+  if (value === null) return null;
+  if (!Array.isArray(value)) return fallback;
   return [...new Set(value.map((item) => Number(item)).filter(Number.isFinite))];
 }
 
+function normalizeScopeMode(value) {
+  if (value === CONTEXT_SCOPE_MODES.CHAT_ONLY) return CONTEXT_SCOPE_MODES.CHAT_ONLY;
+  if (value === CONTEXT_SCOPE_MODES.PINNED_TAB) return CONTEXT_SCOPE_MODES.PINNED_TAB;
+  return CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE;
+}
+
 export function normalizeContextScope(scope = {}) {
-  const mode = scope?.mode === CONTEXT_SCOPE_MODES.PINNED_TAB
-    ? CONTEXT_SCOPE_MODES.PINNED_TAB
-    : CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE;
+  const mode = normalizeScopeMode(scope?.mode);
+  const hasSelectedTabIds = Object.prototype.hasOwnProperty.call(scope || {}, 'selectedTabIds');
   return {
     ...DEFAULT_CONTEXT_SCOPE,
     ...scope,
     mode,
-    pinnedTabId: finiteNumberOrNull(scope?.pinnedTabId),
-    pinnedWindowId: finiteNumberOrNull(scope?.pinnedWindowId),
-    pinnedTitle: compactPinnedTitle(scope?.pinnedTitle || ''),
-    pinnedUrl: String(scope?.pinnedUrl || ''),
-    selectedTabIds: normalizeSelectedTabIds(scope?.selectedTabIds),
+    pinnedTabId: mode === CONTEXT_SCOPE_MODES.CHAT_ONLY ? null : finiteNumberOrNull(scope?.pinnedTabId),
+    pinnedWindowId: mode === CONTEXT_SCOPE_MODES.CHAT_ONLY ? null : finiteNumberOrNull(scope?.pinnedWindowId),
+    pinnedTitle: mode === CONTEXT_SCOPE_MODES.CHAT_ONLY ? '' : compactPinnedTitle(scope?.pinnedTitle || ''),
+    pinnedUrl: mode === CONTEXT_SCOPE_MODES.CHAT_ONLY ? '' : String(scope?.pinnedUrl || ''),
+    selectedTabIds: mode === CONTEXT_SCOPE_MODES.CHAT_ONLY
+      ? []
+      : normalizeSelectedTabIds(hasSelectedTabIds ? scope.selectedTabIds : undefined),
   };
 }
 
 export function tabScopeId(scope = DEFAULT_CONTEXT_SCOPE) {
   const normalized = normalizeContextScope(scope);
+  if (normalized.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) return CONTEXT_SCOPE_MODES.CHAT_ONLY;
   return normalized.mode === CONTEXT_SCOPE_MODES.PINNED_TAB && normalized.pinnedTabId !== null
     ? `tab:${normalized.pinnedTabId}`
     : CONTEXT_SCOPE_MODES.FOLLOW_ACTIVE;
@@ -64,12 +75,14 @@ export function sessionBindingKeyForScope(scope = DEFAULT_CONTEXT_SCOPE) {
 
 export function resolveContextTargetTab({ activeTab = null, tabs = [], scope = DEFAULT_CONTEXT_SCOPE } = {}) {
   const normalized = normalizeContextScope(scope);
+  if (normalized.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) return null;
   if (normalized.mode !== CONTEXT_SCOPE_MODES.PINNED_TAB) return activeTab;
   return tabs.find((tab) => Number(tab.id) === normalized.pinnedTabId) || null;
 }
 
 export function filterPromptTabs(tabs = [], scope = DEFAULT_CONTEXT_SCOPE) {
   const normalized = normalizeContextScope(scope);
+  if (normalized.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) return [];
   if (!Array.isArray(normalized.selectedTabIds)) return tabs;
   const ids = new Set(normalized.selectedTabIds);
   return tabs.filter((tab) => ids.has(Number(tab.id)));
@@ -77,6 +90,7 @@ export function filterPromptTabs(tabs = [], scope = DEFAULT_CONTEXT_SCOPE) {
 
 export function shouldRefreshForTabEvent({ scope = DEFAULT_CONTEXT_SCOPE, eventTabId = null, eventType = 'activated' } = {}) {
   const normalized = normalizeContextScope(scope);
+  if (normalized.mode === CONTEXT_SCOPE_MODES.CHAT_ONLY) return false;
   if (normalized.mode !== CONTEXT_SCOPE_MODES.PINNED_TAB) return true;
   if (eventType === 'activated') return false;
   return Number(eventTabId) === normalized.pinnedTabId;

@@ -212,14 +212,44 @@ function countRedactions(context = {}) {
   return (values.match(/\[REDACTED_[A-Z_]+\]/g) || []).length;
 }
 
+function contextScopeLabel(scope = {}) {
+  if (scope?.mode === 'chat-only') return 'Chat only';
+  if (scope?.mode === 'pinned-tab') return 'Pinned tab';
+  return 'Follow active tab';
+}
+
 export function buildContextReceipt({ context = {}, attachments = [], settings = {} } = {}) {
+  const contextScope = context.contextScope || {};
+  if (contextScope.mode === 'chat-only') {
+    return {
+      title: 'What Hermes saw',
+      items: [{ label: 'Context', value: 'Chat only — no browser context attached' }],
+    };
+  }
+
   const activeTab = context.activeTab || {};
   const pageContext = context.pageContext || {};
+  const tabs = Array.isArray(context.tabs) ? context.tabs : [];
+  const selectedTabs = Array.isArray(context.selectedTabs) ? context.selectedTabs : tabs;
   const items = [
+    {
+      label: 'Context scope',
+      value: contextScopeLabel(contextScope),
+    },
     {
       label: 'Active tab',
       value: activeTab.title || activeTab.url ? `${activeTab.title || 'Untitled'} · ${originOf(activeTab.url)}` : 'none',
     },
+  ];
+  if (contextScope.mode === 'pinned-tab') {
+    items.push({
+      label: 'Pinned tab',
+      value: contextScope.pinnedTitle || contextScope.pinnedUrl
+        ? `${contextScope.pinnedTitle || 'Untitled'} · ${originOf(contextScope.pinnedUrl)}`
+        : 'current pinned tab',
+    });
+  }
+  items.push(
     {
       label: 'Selected text',
       value: settings.includeSelectedText === false ? 'disabled' : boolLabel(Boolean(pageContext.selectedText), 'yes', 'no'),
@@ -233,8 +263,12 @@ export function buildContextReceipt({ context = {}, attachments = [], settings =
       value: boolLabel(Boolean(pageContext.youtubeTranscript || pageContext.transcript), 'yes', 'no'),
     },
     {
-      label: 'Open tabs',
-      value: settings.includeTabs === false ? 'disabled' : `${Array.isArray(context.tabs) ? context.tabs.length : 0}`,
+      label: 'Open tabs in window',
+      value: settings.includeTabs === false ? 'disabled' : `${tabs.length}`,
+    },
+    {
+      label: 'Tabs sent to Hermes',
+      value: settings.includeTabs === false ? 'disabled' : `${selectedTabs.length}`,
     },
     {
       label: 'Attachments',
@@ -244,6 +278,6 @@ export function buildContextReceipt({ context = {}, attachments = [], settings =
       label: 'Redactions',
       value: `${countRedactions(context)}`,
     },
-  ];
+  );
   return { title: 'What Hermes saw', items };
 }

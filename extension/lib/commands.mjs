@@ -68,6 +68,15 @@ export const BUILTIN_COMMANDS = Object.freeze([
     prompt: (ctx) => `Explain the technical content on the page "${ctx.activeTab?.title || 'active tab'}" in simple terms. Break down the key concepts, jargon, and architecture. If there is code, explain what it does and why it matters. Assume the reader is familiar with general programming but not the specific domain.`,
   },
   {
+    name: 'rewrite',
+    description: 'Rewrite selected or visible page text in the requested style.',
+    category: 'Page',
+    icon: '✎',
+    requiresInput: true,
+    promptHint: 'Rewrite this page/selection as … (tone, format, audience).',
+    prompt: (ctx) => `Rewrite the relevant content from the page "${ctx.activeTab?.title || 'active tab'}" according to the user's requested style, format, or audience. Prefer selected text when present. Preserve important facts, names, links, code, and numbers unless the user explicitly asks to change them. Return only the rewritten content plus a short note if assumptions were needed.`,
+  },
+  {
     name: 'tabs',
     description: 'List all open tabs with their titles and URLs.',
     category: 'Tabs',
@@ -84,6 +93,16 @@ export const BUILTIN_COMMANDS = Object.freeze([
     requiresInput: false,
     promptHint: 'List interactive elements (buttons, links, forms) on this page.',
     prompt: (ctx) => `List every interactive element visible on the page "${ctx.activeTab?.title || 'active tab'}". Group them by type (links, buttons, forms, inputs, dropdowns). For each element, describe what it does. Keep the answer ordered and scannable.`,
+  },
+  {
+    name: 'action-items',
+    aliases: ['todos', 'tasks'],
+    description: 'Extract concrete action items and follow-ups from this page.',
+    category: 'Page',
+    icon: '☑',
+    requiresInput: false,
+    promptHint: 'Extract action items, owners, deadlines, and open questions.',
+    prompt: (ctx) => `Extract concrete action items from the page "${ctx.activeTab?.title || 'active tab'}". List tasks, owners, deadlines, blockers, decisions, and open questions when they appear. If the page has no real action items, say that clearly and summarize the closest follow-up-worthy points.`,
   },
   {
     name: 'compare',
