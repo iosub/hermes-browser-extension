@@ -5,6 +5,7 @@ import {
 import { formatPickedElementBlock } from './element-picker.mjs';
 import { normalizeImageAspectRatio, resolveImageSource } from './image-render.mjs';
 import { redactSensitiveText } from './redaction.mjs';
+import { CONNECTION_SCHEMA_VERSION, CONNECTION_TRANSPORTS } from './connection-modes.mjs';
 export { redactSensitiveText };
 
 export const GATEWAY_MODES = Object.freeze([
@@ -43,6 +44,9 @@ export const TEXT_SIZE_OPTIONS = Object.freeze([
 ]);
 
 export const DEFAULT_SETTINGS = Object.freeze({
+  connectionSchemaVersion: CONNECTION_SCHEMA_VERSION,
+  connectionMode: 'local',
+  connectionTransport: CONNECTION_TRANSPORTS.LOCAL_API,
   gatewayMode: 'local-api',
   gatewayUrl: 'http://127.0.0.1:8642',
   apiKey: '',

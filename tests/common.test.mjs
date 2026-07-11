@@ -460,6 +460,49 @@ test('privacySafeTabForPrompt redacts sensitive tab titles and URLs before promp
   assert.match(prompt, /Active tab URL: \(omitted by privacy guard\)/);
 });
 
+test('connection settings expose a three-mode product schema without removing legacy transports', () => {
+  assert.equal(DEFAULT_SETTINGS.connectionSchemaVersion, 1);
+  assert.equal(DEFAULT_SETTINGS.connectionMode, 'local');
+  assert.equal(DEFAULT_SETTINGS.connectionTransport, 'local-api');
+  assert.equal(GATEWAY_MODES.some((mode) => mode.value === 'local-api'), true);
+  assert.equal(GATEWAY_MODES.some((mode) => mode.value === 'remote-api'), true);
+  assert.equal(GATEWAY_MODES.some((mode) => mode.value === 'remote-dashboard'), true);
+});
+
+test('sidepanel hydrates and saves product mode separately from compatibility transport', () => {
+  const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  assert.match(source, /migrateConnectionSettings\(stored\.hermesBrowserSettings\s*\|\|\s*\{\}\)/);
+  assert.match(source, /connectionMode:\s*normalizeConnectionMode/);
+  assert.match(source, /connectionTransport/);
+  assert.match(source, /legacyGatewayModeForConnection/);
+  assert.match(source, /createConnectionController/);
+});
+
+test('settings UI exposes Local gateway, Hermes Cloud, and Remote gateway cards', () => {
+  const html = readFileSync(new URL('../extension/sidepanel.html', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  assert.match(html, /data-connection-mode="local"/);
+  assert.match(html, /data-connection-mode="cloud"/);
+  assert.match(html, /data-connection-mode="remote"/);
+  assert.match(html, />Hermes Cloud</);
+  assert.match(html, /id="connectionModeInput"/);
+  assert.match(html, /id="apiKeyField"/);
+  assert.doesNotMatch(html, /data-gateway-location=/);
+  assert.match(source, /function renderConnectionModeCards/);
+  assert.match(source, /function renderConnectionModePanel/);
+});
+
+test('connection controller owns user-driven connect and test generations', () => {
+  const source = readFileSync(new URL('../extension/sidepanel.js', import.meta.url), 'utf8');
+  const instances = source.match(/createConnectionController\s*\(/g) || [];
+  assert.equal(instances.length, 1);
+  assert.match(source, /async function connectToHermes[\s\S]*connectionController\.begin/);
+  assert.match(source, /async function testConnection[\s\S]*connectionController\.begin/);
+  assert.match(source, /connectionController\.transition\([^,]+,\s*CONNECTION_STATES\.READY/);
+  assert.match(source, /connectionController\.transition\([^,]+,\s*CONNECTION_STATES\.ERROR/);
+  assert.match(source, /connectionController\.cancel\('connection settings changed'\)/);
+});
+
 test('gateway settings support explicit local and remote Hermes API servers', () => {
   assert.deepEqual(GATEWAY_MODES.map((mode) => mode.value), ['local-api', 'remote-api', 'remote-dashboard']);
   assert.equal(DEFAULT_SETTINGS.gatewayMode, 'local-api');
